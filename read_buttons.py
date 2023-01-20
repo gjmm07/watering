@@ -14,12 +14,19 @@ i2c = I2C(0, sda=Pin(20), scl=Pin(21), freq=100000)
 # Initialisierung LCD über I2C
 lcd = I2cLcd(i2c, 0x27, 2, 16)
 
+def print_to_display(text):
+    lcd.clear()
+    lcd.putstr(text)
 
-def run_selection(items):
+
+def run_selection(header, iter_items):
     old_back, old_select, old_clock = 1, 1, 1
-    selection = items[0]
-    lcd.putstr(selection)
-    iterator = Iterator(items)
+    if len(iter_items) == 0:
+        return
+    selection = iter_items[0]
+    lcd.clear()
+    lcd.putstr(header + "\n" + selection)
+    iterator = Iterator(iter_items)
     while True:
         back, select, clock, direction = back_button.value(), select_button.value(), clock_button.value(), direction_button.value()
         if clock and not old_clock: 
@@ -28,9 +35,9 @@ def run_selection(items):
             else:
                 selection = iterator.next_()
             lcd.clear()
-            lcd.putstr(selection)
+            lcd.putstr(header + "\n" + selection)
         if back != old_back and back:
-            return "back"
+            return "BACK"
         elif select != old_select and select:
             return selection
         time.sleep(0.005)
@@ -38,7 +45,7 @@ def run_selection(items):
 
 
 if __name__ == "__main__":
-    print(run_selection(["A", "B", "C", "D"]))
+    print(run_selection("abcd", ["A", "B", "C", "D"]))
 
 
 

@@ -35,7 +35,7 @@ def switch_all():
             print(i)
             
             
-def switch_single(item=(0, 0, 0)):
+def switch_single(item=[0, 0, 0]):
     dict_ = {"0": s0, "1": s1, "2": s2}
     for j, pin in enumerate(item):
         if pin: 
