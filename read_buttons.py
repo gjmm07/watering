@@ -4,9 +4,9 @@ from Iterator import Iterator
 from machine_i2c_lcd import I2cLcd
 
 back_button = Pin(22, Pin.IN, Pin.PULL_UP)
-select_button = Pin(7, Pin.IN, Pin.PULL_UP)
-clock_button = Pin(9, Pin.IN)
-direction_button = Pin(8, Pin.IN)
+select_button = Pin(10, Pin.IN, Pin.PULL_UP)
+clock_button = Pin(11, Pin.IN)
+direction_button = Pin(12, Pin.IN)
 
 # Initialisierung I2C
 i2c = I2C(0, sda=Pin(20), scl=Pin(21), freq=100000)

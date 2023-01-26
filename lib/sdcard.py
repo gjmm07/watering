@@ -76,7 +76,7 @@ class SDCard:
             self.spi.write(b"\xff")
 
         # CMD0: init card; should return _R1_IDLE_STATE (allow 5 attempts)
-        for _ in range(5):
+        for _ in range(10):
             if self.cmd(0, 0, 0x95) == _R1_IDLE_STATE:
                 break
         else:
