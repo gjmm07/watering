@@ -1,2 +1,3 @@
-# Bew-sserung
-# watering-
+# Bewaesserung
+
+Micropython Code für Balkon Bewässerungsanlage
