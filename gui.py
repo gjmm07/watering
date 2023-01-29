@@ -1,6 +1,7 @@
 from read_buttons import run_selection, print_to_display
 from pots import Pots, StateMachine
 import utime
+import time
 
 SIM = False
 

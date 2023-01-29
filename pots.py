@@ -1,11 +1,29 @@
-from machine import Pin, ADC
+from machine import Pin, ADC, I2C, SPI
 import utime
+from bme280 import BME280 #Import BME280-lib
+import time
+import sdcard
+import os
 
 # define hardware pins
+sda=Pin(20)
+scl=Pin(21)
+i2c=I2C(0, sda=sda, scl=scl, freq=400000)
+sensorBME = BME280(i2c=i2c)
+
+spi=SPI(1,baudrate=40000000,sck=Pin(14),mosi=Pin(15),miso=Pin(8))
+sd=sdcard.SDCard(spi,Pin(9))
+# Create a instance of MicroPython Unix-like Virtual File System (VFS),
+vfs=os.VfsFat(sd)
+# Mount the SD card
+os.mount(sd,'/sd')
+
 s0_hsensor = Pin(2, Pin.OUT)
 s1_hsensor = Pin(4, Pin.OUT)
 s2_hsensor = Pin(3, Pin.OUT)
 hsensor = ADC(27)
+pump = pump = Pin(13, Pin.OUT)
+pump.low()
 
 disable_act = Pin(19, Pin.OUT)
 disable_act.high()
@@ -64,31 +82,75 @@ class Pots:
             lst[0].clear()
      
 
-def read_sensors(pots_to_run, hsensor_data):
-    """ Reads the humidity sensors
-    # todo: don't let lists grow infit
+def read_hsensors(pots_to_run, hsensor_data, watered_pots=None):
+    """
+    Reads the humidity sensors
     """
     for i, pot in enumerate(pots_to_run):
         set_mux(hsensor_assignment.get(pot.get("Sensor Pin")))
         utime.sleep(0.1)
+        if len(hsensor_data[0]) > 3:
+            for x in hsensor_data:
+                x.pop(0)
         hsensor_data[i].append(hsensor.read_u16())
-    return hsensor_data, "SWITCH ACTUATORS"
+    return hsensor_data, watered_pots, "SWITCH ACTUATORS"
 
-def switch_actuators(pots_to_run, hsensor_data):
-    """ Depending on the read humidity, valves will be switched"""
-    print("switch actuators")
+
+def switch_actuators(pots_to_run, hsensor_data, watered_pots=None):
+    """
+    Depending on the read humidity, valves will be switched
+    """
+    boundary = {"WET": 1000, "MEDIUM": 5000, "DRY": 10000}
+    watered_pots = [False for _ in range(len(pots_to_run))]
+    for i, hum, pot in zip(list(range(len(hsensor_data))), hsensor_data, pots_to_run):
+        if all(list(map(lambda x: x < boundary.get(pot.get("Humidity")), hum))):
+            # water pot
+            watered_pots[i] = True
+            disable_act.low()
+            pump.high()
+            utime.sleep(0.5) #build up the pressure
+            set_mux(actuator_assignment.get(pot.get("Actuator Pin")))
+            utime.sleep(0.5) 
+            disable_act.high()
+    pump.low()
     utime.sleep(0.5)
-    return hsensor_data, "READ SENSORS"
+    return hsensor_data, watered_pots, "IDLE"
 
 
+def idle(pots_to_run, hsensor_data, watered_pots=None):
+    pump.low()
+    disable_act.high()
+    utime.sleep(1)
+    return hsensor_data, watered_pots, "SAVE DATA"
+
+
+def save_data_sd(pots_to_run, hsensor_data, watered_pots=None):
+    """
+    Reads the wheather data, wheather forecast and saves everything to sd-card
+    """
+    temp, air_pressure, rel_airhum = read_wheather_data()
+    print(watered_pots)
+    year, month, day, hour, minute, *_ = time.localtime()
+    filename = "data{}_{}_{}.txt".format(day, month, year)
+    with open("/sd/"+ filename, "a+") as file:
+        file.write(",".join(map(str, [hour, minute, temp, air_pressure, rel_airhum] + watered_pots)))
+    return hsensor_data, watered_pots, "READ SENSORS"
+
+
+def read_wheather_data():
+    temp, pres, rel_airhum = sensorBME.values
+    return float(temp.split("C")[0]), float(pres.split("hPa")[0]), float(rel_airhum.split("%")[0])
+    
 def set_mux(pins):
     for pin in pins:
         pin()
 
 
 class StateMachine:
-    handlers = {"READ SENSORS": read_sensors,
-                "SWITCH ACTUATORS": switch_actuators}
+    handlers = {"READ SENSORS": read_hsensors,
+                "SWITCH ACTUATORS": switch_actuators,
+                "IDLE": idle,
+                "SAVE DATA": save_data_sd}
     
     def __init__(self, pots_to_run, a):
         print(a)
@@ -96,11 +158,12 @@ class StateMachine:
         self.hsensor_data = [[] for _ in range(len(self.pots))]
         
     def run_machine(self):
-        sensor_data, next_handler = self.handlers["READ SENSORS"](self.pots, self.hsensor_data)
+        # todo: read pots only during none-running times,
+        # save init file which specifies the running pots
+        sensor_data, watered_pots, next_handler = self.handlers["READ SENSORS"](self.pots, self.hsensor_data)
         while True:
-            print(sensor_data)
             utime.sleep(2)
-            sensor_data, next_handler = self.handlers[next_handler](self.pots, sensor_data)
+            sensor_data, watered_pots, next_handler = self.handlers[next_handler](self.pots, sensor_data, watered_pots)
         
         
         
