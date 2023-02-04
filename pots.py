@@ -114,14 +114,14 @@ def switch_actuators(pots_to_run, hsensor_data, watered_pots=None):
             disable_act.high()
     pump.low()
     utime.sleep(0.5)
-    return hsensor_data, watered_pots, "IDLE"
+    return hsensor_data, watered_pots, "SAVE DATA"
 
 
 def idle(pots_to_run, hsensor_data, watered_pots=None):
     pump.low()
     disable_act.high()
     utime.sleep(1)
-    return hsensor_data, watered_pots, "SAVE DATA"
+    return hsensor_data, watered_pots, "READ SENSORS"
 
 
 def save_data_sd(pots_to_run, hsensor_data, watered_pots=None):
@@ -134,13 +134,34 @@ def save_data_sd(pots_to_run, hsensor_data, watered_pots=None):
     filename = "data{}_{}_{}.txt".format(day, month, year)
     with open("/sd/"+ filename, "a+") as file:
         file.write(",".join(map(str, [hour, minute, temp, air_pressure, rel_airhum] + watered_pots)))
-    return hsensor_data, watered_pots, "READ SENSORS"
+    return hsensor_data, watered_pots, "IDLE"
 
 
 def read_wheather_data():
     temp, pres, rel_airhum = sensorBME.values
     return float(temp.split("C")[0]), float(pres.split("hPa")[0]), float(rel_airhum.split("%")[0])
+
+
+def read_wheather_forcast():
+    """
+    Reads the weather forcast and returns a dict with forcast from current day starting at 0:00 and going 3 days ahead
+    """
+    if today is None:
+        today = time.localtime()[:3]
+    data = requests.get("https://wttr.in/Cologne?format=j1").json()
+    monitor_items = ["humidity", "precipMM", "pressure", "tempC", "winddirDegree", "windspeedKmph"]
+    gen = (x for x in data["weather"])
+    today_forcast = next(gen)
+    tday = tuple(map(int, today_forcast["date"].split("-")))
+    if tday != today:
+        raise ValueError
+    forcast_data = {int(x["time"]): list(map(lambda name: x[name], monitor_items)) for x in today_forcast["hourly"]}
+    for i, item in enumerate(gen):
+        f_data = {int(x["time"]) + (i+1)*2400: list(map(lambda name: x[name], monitor_items)) for x in item["hourly"]}
+        forcast_data = forcast_data | f_data
+    return forcast_data
     
+
 def set_mux(pins):
     for pin in pins:
         pin()
