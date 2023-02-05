@@ -4,6 +4,7 @@ from bme280 import BME280 #Import BME280-lib
 import time
 import sdcard
 import os
+import urequests
 
 # define hardware pins
 sda=Pin(20)
@@ -48,6 +49,7 @@ actuator_assignment = {"A": (s0_act.low, s1_act.high, s2_act.low),
                        "G": (s0_act.high, s1_act.high, s2_act.high),
                        "H": (s0_act.high, s1_act.low, s2_act.high)}
 
+
 class Pots:
     target_hum = ["WET", "MEDIUM", "DRY"]
     pot_size = ["HUGE", "MEDIUM", "SMALL"]
@@ -80,85 +82,34 @@ class Pots:
             lst[1].extend(lst[0])
             lst[1].sort()
             lst[0].clear()
-     
-
-def read_hsensors(pots_to_run, hsensor_data, watered_pots=None):
-    """
-    Reads the humidity sensors
-    """
-    for i, pot in enumerate(pots_to_run):
-        set_mux(hsensor_assignment.get(pot.get("Sensor Pin")))
-        utime.sleep(0.1)
-        if len(hsensor_data[0]) > 3:
-            for x in hsensor_data:
-                x.pop(0)
-        hsensor_data[i].append(hsensor.read_u16())
-    return hsensor_data, watered_pots, "SWITCH ACTUATORS"
 
 
-def switch_actuators(pots_to_run, hsensor_data, watered_pots=None):
-    """
-    Depending on the read humidity, valves will be switched
-    """
-    boundary = {"WET": 1000, "MEDIUM": 5000, "DRY": 10000}
-    watered_pots = [False for _ in range(len(pots_to_run))]
-    for i, hum, pot in zip(list(range(len(hsensor_data))), hsensor_data, pots_to_run):
-        if all(list(map(lambda x: x < boundary.get(pot.get("Humidity")), hum))):
-            # water pot
-            watered_pots[i] = True
-            disable_act.low()
-            pump.high()
-            utime.sleep(0.5) #build up the pressure
-            set_mux(actuator_assignment.get(pot.get("Actuator Pin")))
-            utime.sleep(0.5) 
-            disable_act.high()
-    pump.low()
-    utime.sleep(0.5)
-    return hsensor_data, watered_pots, "SAVE DATA"
-
-
-def idle(pots_to_run, hsensor_data, watered_pots=None):
-    pump.low()
-    disable_act.high()
-    utime.sleep(1)
-    return hsensor_data, watered_pots, "READ SENSORS"
-
-
-def save_data_sd(pots_to_run, hsensor_data, watered_pots=None):
-    """
-    Reads the wheather data, wheather forecast and saves everything to sd-card
-    """
-    temp, air_pressure, rel_airhum = read_wheather_data()
-    print(watered_pots)
-    year, month, day, hour, minute, *_ = time.localtime()
-    filename = "data{}_{}_{}.txt".format(day, month, year)
-    with open("/sd/"+ filename, "a+") as file:
-        file.write(",".join(map(str, [hour, minute, temp, air_pressure, rel_airhum] + watered_pots)))
-    return hsensor_data, watered_pots, "IDLE"
-
-
-def read_wheather_data():
+def read_weather_data():
     temp, pres, rel_airhum = sensorBME.values
     return float(temp.split("C")[0]), float(pres.split("hPa")[0]), float(rel_airhum.split("%")[0])
 
 
-def read_wheather_forcast():
+def read_weather_forecast(today=None):
     """
-    Reads the weather forcast and returns a dict with forcast from current day starting at 0:00 and going 3 days ahead
+    Reads the weather forcast and returns a dict with weather forecast data, starting at current hour and counting up in 3h steps
     """
     if today is None:
         today = time.localtime()[:3]
-    data = requests.get("https://wttr.in/Cologne?format=j1").json()
+    hour, bounds = time.localtime()[3] * 100, list(range(0, 2400, 300))
+    curr_bound = min(bounds, key=lambda x: abs(x - hour + 150))
+    data = urequests.get("https://wttr.in/Cologne?format=j1").json()
     monitor_items = ["humidity", "precipMM", "pressure", "tempC", "winddirDegree", "windspeedKmph"]
     gen = (x for x in data["weather"])
     today_forcast = next(gen)
     tday = tuple(map(int, today_forcast["date"].split("-")))
     if tday != today:
-        raise ValueError
-    forcast_data = {int(x["time"]): list(map(lambda name: x[name], monitor_items)) for x in today_forcast["hourly"]}
+        # if weather data is not updated for the next day, drop current day
+        today_forcast = next(gen)
+    forcast_data = {int(x["time"])-curr_bound: list(map(lambda name: x[name], monitor_items)) for x in today_forcast["hourly"]
+                    if int(x["time"]) >= curr_bound}
     for i, item in enumerate(gen):
-        f_data = {int(x["time"]) + (i+1)*2400: list(map(lambda name: x[name], monitor_items)) for x in item["hourly"]}
-        forcast_data = forcast_data | f_data
+        f_data = {int(x["time"]) + (i+1)*2400 - curr_bound: list(map(lambda name: x[name], monitor_items)) for x in item["hourly"]}
+        forcast_data |= f_data
     return forcast_data
     
 
@@ -168,24 +119,87 @@ def set_mux(pins):
 
 
 class StateMachine:
-    handlers = {"READ SENSORS": read_hsensors,
-                "SWITCH ACTUATORS": switch_actuators,
-                "IDLE": idle,
-                "SAVE DATA": save_data_sd}
     
-    def __init__(self, pots_to_run, a):
-        print(a)
-        self.pots = pots_to_run
-        self.hsensor_data = [[] for _ in range(len(self.pots))]
+    def __init__(self, pots_to_run, times):
+        self.start_time, self.end_time = int(times["Start Time"]), int(times["End Time"])
+        self.pots_to_run = pots_to_run
+        self.hsensor_data = [[] for _ in range(len(pots_to_run))]
+        self.watered_pots = [False for _ in range(len(pots_to_run))]
+        self.cur_time = {}
+        self.update_time()
+        
+    def update_time(self):
+        self.cur_time = {name: val for name, val in zip(["year", "month", "day", "hour", "minute"], time.localtime())}
+        
         
     def run_machine(self):
-        # todo: read pots only during none-running times,
-        # save init file which specifies the running pots
-        sensor_data, watered_pots, next_handler = self.handlers["READ SENSORS"](self.pots, self.hsensor_data)
+        # write init file
+        filename = "{}_{}_{}_init.txt".format(self.cur_time["day"], self.cur_time["month"], self.cur_time["year"])
+        print(self.pots_to_run)
+        with open("/sd/"+ filename, "w") as file:
+            for pot in self.pots_to_run: 
+                file.write("Pot ID: {}, Pot Size: {}, Humidity {} \n".format(pot["ID"], pot["Pot Size"], pot["Humidity"]))
+            file.write("\n")
+            file.write("{}: {}\n\n".format(self.cur_time["hour"], self.cur_time["minute"]))
+            for name in ["hour", "minute", "temperature",
+                         "air_pressure", "watered pots in timestep {}x".format(len(self.pots_to_run)),
+                         "forcast_data; 3 hour steps: [humidity, precipMM, pressure, tempC, winddirDegree, windspeedKmph]"]
+        next_handler = self.read_hsensors()
         while True:
             utime.sleep(2)
-            sensor_data, watered_pots, next_handler = self.handlers[next_handler](self.pots, sensor_data, watered_pots)
-        
+            self.update_time
+            next_handler = next_handler()
+    
+    def read_hsensors(self):
+        for i, pot in enumerate(self.pots_to_run):
+            set_mux(hsensor_assignment.get(pot.get("Sensor Pin")))
+            utime.sleep(0.1)
+            if len(self.hsensor_data[0]) > 3:
+                for x in self.hsensor_data:
+                    x.pop(0)
+            self.hsensor_data[i].append(hsensor.read_u16())
+        if self.start_time < self.cur_time["hour"] < self.end_time:
+            # do not switch anything
+            return self.save_data_sd
+        return self.switch_actuators
+
+    def switch_actuators(self):
+        """
+        Depending on the read humidity, valves will be switched
+        """
+        boundary = {"WET": 1000, "MEDIUM": 5000, "DRY": 10000}
+        self.watered_pots = [False for _ in range(len(self.pots_to_run))]
+        for i, hum, pot in zip(list(range(len(self.hsensor_data))), self.hsensor_data, self.pots_to_run):
+            if all(list(map(lambda x: x < boundary.get(pot.get("Humidity")), hum))):
+                # water pot
+                self.watered_pots[i] = True
+                disable_act.low()
+                pump.high()
+                utime.sleep(0.5) #build up the pressure
+                set_mux(actuator_assignment.get(pot.get("Actuator Pin")))
+                utime.sleep(0.5) 
+                disable_act.high()
+        pump.low()
+        utime.sleep(0.5)
+        return self.save_data_sd
+
+    def idle(self):
+        disable_act.high()
+        pump.low()
+        utime.sleep(1)
+        return self.read_hsensors
+
+    def save_data_sd(self):
+        """
+        Reads the wheather data, wheather forecast and saves everything to sd-card
+        """
+        temp, air_pressure, rel_airhum = read_weather_data()
+        filename = "{}_{}_{}_data.txt".format(self.cur_time["day"], self.cur_time["month"], self.cur_time["year"])
+        with open("/sd/"+ filename, "a+") as file:
+            file.write(",".join(map(str, [self.cur_time["hour"], self.cur_time["minute"], temp, air_pressure, rel_airhum]
+                                    + self.watered_pots
+                                    + list(read_weather_forecast().values()))))
+        return self.idle
         
         
 
