@@ -1,9 +1,8 @@
-from read_buttons import run_selection, print_to_display
-from pots import Pots, StateMachine
+from read_buttons import run_selection, print_to_display, sleep_and_wait
+from pots import Pots, StateMachine, input_activity
 import utime
-import time
-
-SIM = False
+import time, _thread
+from Sync_thread import Sync
 
 class MenuObject:
     def __init__(self, name, slaves, short_name, last=False):
@@ -27,11 +26,11 @@ def menu(master_order):
     while True:
         master = master_order[-1]
         if not master.last:
-            if not SIM:
-                selection = run_selection(" ".join([x.short_name for x in master_order]), master.return_slaves_name())
-            else:
-                selection = button_select([x.name for x in master_order], master.return_slaves_name() + ["BACK"])
-            if selection != "BACK":
+            selection = run_selection(" ".join([x.short_name for x in master_order]), master.return_slaves_name())
+            if selection == "TIMED OUT":
+                sleep_and_wait()
+                master_order = [main_menu]
+            elif selection != "BACK":
                 master_order.append(master.return_slave(selection))
             elif selection == "BACK" and master.name != "MAIN MENU":
                 del master_order[-1]
@@ -41,15 +40,16 @@ def menu(master_order):
             else:
                 sel = {key: None for key in [x[0] for x in master.slaves.values()]}
                 for i in range(len(master.slaves)):
-                    if not SIM:
-                        selection = run_selection(master.slaves[i][0], master.slaves[i][1])
-                    else:
-                        selection = button_select(master.slaves[i][0], master.slaves[i][1] + ["BACK"])
+                    selection = run_selection(master.slaves[i][0], master.slaves[i][1])
                     if selection == "BACK":
                         print_to_display("FAILURE")
                         utime.sleep(1)
                         del master_order[-1]
                         break
+                    elif selection == "TIMED OUT":
+                        # todo: Time Out can be inserted into the pots to run
+                        sleep_and_wait()
+                        master_order = [main_menu]
                     sel[master.slaves[i][0]] = selection
                 else:
                     print_to_display("SUCCESS")
@@ -60,15 +60,18 @@ def menu(master_order):
 
 
 def main():
-    pots = Pots(sim=SIM)
+    pots = Pots()
     execute = dict(zip(["ADD POT", "REMOVE SINGLE", "RUN", "REMOVE ALL"], [pots.add_pot, pots.remove_pot, None, pots.reset_to_standard]))
     a = menu([main_menu])
     order, sel = next(a)
     while True:
+        print(order)
         print(sel)
         if order[-1].name == "RUN":
             m = StateMachine(pots.pots, sel)
-            m.run_machine()
+            Sync.clear_flag()
+            second_thread = _thread.start_new_thread(m.run_machine, ())
+            input_activity()
         else:
             execute[order[-1].name](sel)
         order, sel = a.send([main_menu])

@@ -1,5 +1,5 @@
 from machine import Pin, I2C
-import time
+import time, utime
 from Iterator import Iterator
 from machine_i2c_lcd import I2cLcd
 
@@ -19,15 +19,20 @@ def print_to_display(text):
     lcd.putstr(text)
 
 
-def run_selection(header, iter_items):
-    old_back, old_select, old_clock = 1, 1, 1
+def run_selection(header, iter_items, timeout=20):
     if len(iter_items) == 0:
         return
+    if timeout is None:
+        criteria = lambda *a: True
+    else:
+        criteria = lambda st, to: (time.time() - st) < to
     selection = iter_items[0]
     lcd.clear()
     lcd.putstr(header + "\n" + selection)
     iterator = Iterator(iter_items)
-    while True:
+    old_back, old_select, old_clock = 1, 1, 1
+    start_time = time.time()
+    while criteria(start_time, timeout):
         back, select, clock, direction = back_button.value(), select_button.value(), clock_button.value(), direction_button.value()
         if clock and not old_clock: 
             if direction:
@@ -36,12 +41,30 @@ def run_selection(header, iter_items):
                 selection = iterator.next_()
             lcd.clear()
             lcd.putstr(header + "\n" + selection)
+            start_time = time.time()
         if back != old_back and back:
             return "BACK"
         elif select != old_select and select:
             return selection
         time.sleep(0.005)
         old_back, old_select, old_clock = back, select, clock
+    return "TIMED OUT"
+
+
+def sleep_and_wait():
+    lcd.clear()
+    lcd.backlight_off()
+    old_back, old_select = 1, 1
+    while True:
+        back, select = back_button.value(), select_button.value()
+        utime.sleep(0.05)
+        if back != old_back and back:
+            break
+        elif select != old_select and select:
+            break
+        old_back, old_select = back, select
+    lcd.backlight_on()
+        
 
 
 if __name__ == "__main__":

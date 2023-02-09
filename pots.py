@@ -1,16 +1,21 @@
 from machine import Pin, ADC, I2C, SPI
 import utime
-from bme280 import BME280 #Import BME280-lib
 import time
 import sdcard
 import os
-import urequests
+import secrets
+from bme280 import BME280 #Import BME280-lib
+from Sync_thread import Sync
+import read_buttons
+import _thread
 
 # define hardware pins
 sda=Pin(20)
 scl=Pin(21)
 i2c=I2C(0, sda=sda, scl=scl, freq=400000)
 sensorBME = BME280(i2c=i2c)
+
+# wlan = network.WLAN(network.STA_IF)
 
 spi=SPI(1,baudrate=40000000,sck=Pin(14),mosi=Pin(15),miso=Pin(8))
 sd=sdcard.SDCard(spi,Pin(9))
@@ -57,8 +62,7 @@ class Pots:
     sensor_pin = ([], ["A", "B", "C", "D", "E", "F", "G", "H"])
     iden = ([], ["1", "2", "3", "4", "5", "6", "7", "8"])
     
-    def __init__(self, sim=True):
-        sim = sim
+    def __init__(self):
         self.pots = []
     
     def add_pot(self, definition):
@@ -84,33 +88,42 @@ class Pots:
             lst[0].clear()
 
 
-def read_weather_data():
-    temp, pres, rel_airhum = sensorBME.values
-    return float(temp.split("C")[0]), float(pres.split("hPa")[0]), float(rel_airhum.split("%")[0])
+def read_current_weather():
+    for sample in (x.split(token)[0] for x, token in zip(sensorBME.values, ["C", "hPa", "%"])):
+        yield sample
 
 
-def read_weather_forecast(today=None):
-    """
-    Reads the weather forcast and returns a dict with weather forecast data, starting at current hour and counting up in 3h steps
-    """
-    if today is None:
-        today = time.localtime()[:3]
-    hour, bounds = time.localtime()[3] * 100, list(range(0, 2400, 300))
-    curr_bound = min(bounds, key=lambda x: abs(x - hour + 150))
-    data = urequests.get("https://wttr.in/Cologne?format=j1").json()
-    monitor_items = ["humidity", "precipMM", "pressure", "tempC", "winddirDegree", "windspeedKmph"]
-    gen = (x for x in data["weather"])
-    today_forcast = next(gen)
-    tday = tuple(map(int, today_forcast["date"].split("-")))
-    if tday != today:
-        # if weather data is not updated for the next day, drop current day
-        today_forcast = next(gen)
-    forcast_data = {int(x["time"])-curr_bound: list(map(lambda name: x[name], monitor_items)) for x in today_forcast["hourly"]
-                    if int(x["time"]) >= curr_bound}
-    for i, item in enumerate(gen):
-        f_data = {int(x["time"]) + (i+1)*2400 - curr_bound: list(map(lambda name: x[name], monitor_items)) for x in item["hourly"]}
-        forcast_data |= f_data
-    return forcast_data
+def activate_wifi(func):
+    def wrapper(url, *args):
+        for _ in range(5):
+            if wlan.isconnected():
+                return func(url, *args)
+            else:
+                wlan.active(True)
+                wlan.connect(secrets.SSID, secrets.PASSWORD)
+                utime.sleep(0.5)
+    return wrapper
+            
+        
+@activate_wifi
+def acquire_data(url, *args):
+    for _ in range(10):
+        try:
+            for day in range(3):
+                # light programming as memory is limited
+                # yield urequests.get(url).json()["weather"][day]["date"]
+                for sample in (hour[name]
+                           for hour in urequests.get(url).json()["weather"][day]["hourly"]
+                           for name in args):
+                    # pass every sample singlehanded to preserve memory
+                    yield sample
+            print("Success")
+            break
+        except OSError:
+            pass
+    else:
+        print("No data received")
+        return None
     
 
 def set_mux(pins):
@@ -131,26 +144,38 @@ class StateMachine:
     def update_time(self):
         self.cur_time = {name: val for name, val in zip(["year", "month", "day", "hour", "minute"], time.localtime())}
         
-        
     def run_machine(self):
-        # write init file
+        """
+        runs the watering machine
+        """
+        # todo: can be executed once
+        self.write_init_file()
+        next_handler = self.read_hsensors()
+        while True:
+            utime.sleep(2)
+            self.update_time
+            next_handler = next_handler()
+            if next_handler == "ZZZ":
+                break
+            
+    def write_init_file(self):
+        """
+        Writes an init file on the sd card
+        """
         filename = "{}_{}_{}_init.txt".format(self.cur_time["day"], self.cur_time["month"], self.cur_time["year"])
-        print(self.pots_to_run)
         with open("/sd/"+ filename, "w") as file:
             for pot in self.pots_to_run: 
                 file.write("Pot ID: {}, Pot Size: {}, Humidity {} \n".format(pot["ID"], pot["Pot Size"], pot["Humidity"]))
             file.write("\n")
             file.write("{}: {}\n\n".format(self.cur_time["hour"], self.cur_time["minute"]))
             for name in ["hour", "minute", "temperature",
-                         "air_pressure", "watered pots in timestep {}x".format(len(self.pots_to_run)),
-                         "forcast_data; 3 hour steps: [humidity, precipMM, pressure, tempC, winddirDegree, windspeedKmph]"]
-        next_handler = self.read_hsensors()
-        while True:
-            utime.sleep(2)
-            self.update_time
-            next_handler = next_handler()
-    
+                         "air_pressure", "watered pots in timestep {}x".format(len(self.pots_to_run))]:
+                file.write(name + "\n")
+        
     def read_hsensors(self):
+        """
+        reads humiditiy sensors
+        """
         for i, pot in enumerate(self.pots_to_run):
             set_mux(hsensor_assignment.get(pot.get("Sensor Pin")))
             utime.sleep(0.1)
@@ -193,13 +218,37 @@ class StateMachine:
         """
         Reads the wheather data, wheather forecast and saves everything to sd-card
         """
-        temp, air_pressure, rel_airhum = read_weather_data()
+        gen_curr = read_current_weather()
+
+        #gen_forecast = acquire_data("https://wttr.in/Cologne?format=j1", "time", "humidity", "precipMM", "pressure",
+        #           "tempC") #, "winddirDegree", "windspeedKmph")
+
         filename = "{}_{}_{}_data.txt".format(self.cur_time["day"], self.cur_time["month"], self.cur_time["year"])
         with open("/sd/"+ filename, "a+") as file:
-            file.write(",".join(map(str, [self.cur_time["hour"], self.cur_time["minute"], temp, air_pressure, rel_airhum]
-                                    + self.watered_pots
-                                    + list(read_weather_forecast().values()))))
+            for g in gen_curr:
+                file.write(g)
+            #for g in gen_forecast:
+            #    if type(g) == str:
+            #        file.write(g)
+            #    else:
+            #        for zz in g:
+            #            file.write(zz)
+            file.write("\n")
+        if Sync.get_flag:
+            return "ZZZ"
         return self.idle
+    
+
+def input_activity():
+    # todo: show current condition in lcd display
+    print("reached")
+    utime.sleep(1)
+    while True:
+        read_buttons.sleep_and_wait()
+        if read_buttons.run_selection("Breakup", ["Yes", "No"]) == "Yes":
+            Sync.set_flag()
+            read_buttons.print_to_display("Waiting")
+            break
         
         
 
@@ -208,9 +257,11 @@ if __name__ == "__main__":
     pots.add_pot({'Pot Size': 'HUGE', 'Humidity': 'WET', 'Actuator Pin': 'E', 'ID': '1', 'Sensor Pin': 'F'})
     pots.add_pot({'Pot Size': 'HUGE', 'Humidity': 'WET', 'Actuator Pin': 'G', 'ID': '2', 'Sensor Pin': 'E'})
     pots.add_pot({'Pot Size': 'HUGE', 'Humidity': 'WET', 'Actuator Pin': 'H', 'ID': '3', 'Sensor Pin': 'G'})
+    Sync.clear_flag()
     
     m = StateMachine(pots.pots, {"Start Time": "8", "End Time": "20"})
-    m.run_machine()
+    second_thread = _thread.start_new_thread(m.run_machine, ())
+    input_activity()
     
     
     
