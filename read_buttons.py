@@ -19,9 +19,27 @@ def print_to_display(text):
     lcd.putstr(text)
 
 
-def run_selection(header, iter_items, timeout=20):
-    if len(iter_items) == 0:
-        return
+def update_iteritems(func, control, kwargs):
+    iter_items = func()
+    rw_control = [control for _ in range(len(iter_items))]
+    rw_control.insert(kwargs["position"] if kwargs["position"] != "end" else len(rw_control), kwargs["state"])
+    iter_items.insert(kwargs["position"] if kwargs["position"] != "end" else len(rw_control), kwargs["name"])
+    return iter_items, rw_control
+    
+
+def run_selection(header, iter_items, rw_control=False, timeout=20, **kwargs):
+    if isinstance(iter_items, list): 
+        if len(iter_items) == 0:
+            return
+    else:
+        func = iter_items
+        iter_items, rw_control = update_iteritems(func, rw_control, kwargs["extra_item"])
+    if not rw_control:
+        # True = read only, False = write
+        # make all False 
+        rw_control = [False for _ in iter_items]
+    iterator = Iterator(iter_items, rw_control)
+    assert len(iter_items) == len(rw_control)
     if timeout is None:
         criteria = lambda *a: True
     else:
@@ -29,24 +47,36 @@ def run_selection(header, iter_items, timeout=20):
     selection = iter_items[0]
     lcd.clear()
     lcd.putstr(header + "\n" + selection)
-    iterator = Iterator(iter_items)
+    
     old_back, old_select, old_clock = 1, 1, 1
     start_time = time.time()
+    update_time = start_time
+    rw = rw_control[0]
     while criteria(start_time, timeout):
         back, select, clock, direction = back_button.value(), select_button.value(), clock_button.value(), direction_button.value()
         if clock and not old_clock: 
             if direction:
-                selection = iterator.reversed_next()
+                iterator.reversed_next()
+                selection, rw = iterator.current
             else:
-                selection = iterator.next_()
+                iterator.next_()
+                selection, rw = iterator.current
             lcd.clear()
             lcd.putstr(header + "\n" + selection)
             start_time = time.time()
-        if back != old_back and back:
-            return "BACK"
-        elif select != old_select and select:
-            return selection
-        time.sleep(0.005)
+        if not rw:
+            if back != old_back and back:
+                return "BACK"
+            elif select != old_select and select:
+                return selection
+        else:
+            if time.time() - update_time > 1:
+                iterator.update_collection(update_iteritems(func, rw_control, kwargs["extra_item"])[0])
+                selection, rw = iterator.current
+                lcd.clear()
+                lcd.putstr(header + "\n" + selection)
+                update_time = time.time()
+        utime.sleep(0.001)
         old_back, old_select, old_clock = back, select, clock
     return "TIMED OUT"
 

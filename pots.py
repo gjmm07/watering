@@ -86,11 +86,17 @@ class Pots:
             lst[1].extend(lst[0])
             lst[1].sort()
             lst[0].clear()
+            
+    def return_pot_ids(self):
+        return [pot.get("ID") for pot in self.pots]
+    
+    def __len__(self):
+        return len(self.pots)
 
 
 def read_current_weather():
-    for sample in (x.split(token)[0] for x, token in zip(sensorBME.values, ["C", "hPa", "%"])):
-        yield sample
+    return [sample for sample in (x.split(token)[0] for x, token in zip(sensorBME.values, ["C", "hPa", "%"]))]
+
 
 
 def activate_wifi(func):
@@ -133,12 +139,13 @@ def set_mux(pins):
 
 class StateMachine:
     
-    def __init__(self, pots_to_run, times):
+    def __init__(self, pots_to_run, times, sync):
         self.start_time, self.end_time = int(times["Start Time"]), int(times["End Time"])
         self.pots_to_run = pots_to_run
         self.hsensor_data = [[] for _ in range(len(pots_to_run))]
         self.watered_pots = [False for _ in range(len(pots_to_run))]
         self.cur_time = {}
+        self.sync = sync
         self.update_time()
         
     def update_time(self):
@@ -155,7 +162,8 @@ class StateMachine:
             utime.sleep(2)
             self.update_time
             next_handler = next_handler()
-            if next_handler == "ZZZ":
+            if next_handler is None:
+                print("done")
                 break
             
     def write_init_file(self):
@@ -183,7 +191,7 @@ class StateMachine:
                 for x in self.hsensor_data:
                     x.pop(0)
             self.hsensor_data[i].append(hsensor.read_u16())
-        if self.start_time < self.cur_time["hour"] < self.end_time:
+        if not self.start_time < self.cur_time["hour"] < self.end_time:
             # do not switch anything
             return self.save_data_sd
         return self.switch_actuators
@@ -218,15 +226,15 @@ class StateMachine:
         """
         Reads the wheather data, wheather forecast and saves everything to sd-card
         """
-        gen_curr = read_current_weather()
-
+        cur_weather = read_current_weather()
+        self.sync.write_weather(*cur_weather, [sample[-1] for sample in self.hsensor_data])
         #gen_forecast = acquire_data("https://wttr.in/Cologne?format=j1", "time", "humidity", "precipMM", "pressure",
         #           "tempC") #, "winddirDegree", "windspeedKmph")
 
         filename = "{}_{}_{}_data.txt".format(self.cur_time["day"], self.cur_time["month"], self.cur_time["year"])
         with open("/sd/"+ filename, "a+") as file:
-            for g in gen_curr:
-                file.write(g)
+            for g in cur_weather + [sample[-1] for sample in self.hsensor_data]:
+                print(g)
             #for g in gen_forecast:
             #    if type(g) == str:
             #        file.write(g)
@@ -234,21 +242,22 @@ class StateMachine:
             #        for zz in g:
             #            file.write(zz)
             file.write("\n")
-        if Sync.get_flag:
-            return "ZZZ"
+        if not self.sync.run_state_machine:
+            return None
         return self.idle
     
 
-def input_activity():
+def input_activity(sync, pots):
     # todo: show current condition in lcd display
-    print("reached")
     utime.sleep(1)
     while True:
         read_buttons.sleep_and_wait()
-        if read_buttons.run_selection("Breakup", ["Yes", "No"]) == "Yes":
-            Sync.set_flag()
-            read_buttons.print_to_display("Waiting")
-            break
+        sel = read_buttons.run_selection("show", sync.return_data, True, extra_item={"name":"Breakup", "state":False, "position":"end"})
+        if sel == "Breakup":
+            if read_buttons.run_selection("Breakup", ["Yes", "No"]) == "Yes":
+                sync.set_run_sm(False) # kill state machien at suitable time
+                read_buttons.print_to_display("Waiting")
+                break
         
         
 
@@ -257,11 +266,13 @@ if __name__ == "__main__":
     pots.add_pot({'Pot Size': 'HUGE', 'Humidity': 'WET', 'Actuator Pin': 'E', 'ID': '1', 'Sensor Pin': 'F'})
     pots.add_pot({'Pot Size': 'HUGE', 'Humidity': 'WET', 'Actuator Pin': 'G', 'ID': '2', 'Sensor Pin': 'E'})
     pots.add_pot({'Pot Size': 'HUGE', 'Humidity': 'WET', 'Actuator Pin': 'H', 'ID': '3', 'Sensor Pin': 'G'})
-    Sync.clear_flag()
     
-    m = StateMachine(pots.pots, {"Start Time": "8", "End Time": "20"})
+    sync = Sync(pots.return_pot_ids())
+    sync.set_run_sm(True)
+    
+    m = StateMachine(pots.pots, {"Start Time": "8", "End Time": "20"}, sync)
     second_thread = _thread.start_new_thread(m.run_machine, ())
-    input_activity()
+    input_activity(sync, pots)
     
     
     
