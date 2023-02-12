@@ -5,7 +5,7 @@ import sdcard
 import os
 import secrets
 from bme280 import BME280 #Import BME280-lib
-from Sync_thread import Sync
+import Sync_thread
 import read_buttons
 import _thread
 
@@ -24,10 +24,10 @@ vfs=os.VfsFat(sd)
 # Mount the SD card
 os.mount(sd,'/sd')
 
-s0_hsensor = Pin(2, Pin.OUT)
-s1_hsensor = Pin(4, Pin.OUT)
-s2_hsensor = Pin(3, Pin.OUT)
-hsensor = ADC(27)
+s0_hsensor = Pin(4, Pin.OUT)
+s1_hsensor = Pin(5, Pin.OUT)
+s2_hsensor = Pin(6, Pin.OUT)
+hsensor = ADC(26)
 pump = pump = Pin(13, Pin.OUT)
 pump.low()
 
@@ -92,6 +92,40 @@ class Pots:
     
     def __len__(self):
         return len(self.pots)
+    
+    def find_hsensor(self, *args):
+        sync = Sync_thread.SyncSearch(2)
+        sync.set_flag(0, True)
+        sync.set_flag(1, True)
+        second_thread = _thread.start_new_thread(read_buttons.waiting, (sync, "CIR"))
+        length, lim = 5, 1000
+        old_data = self.read_hsensor_non_connected()
+        while True:
+            data = self.read_hsensor_non_connected()
+            bound = [abs(x - y) > lim for x, y in zip(old_data, data)]
+            old_data = data
+            for i, b in enumerate(bound):
+                if b:
+                    sync.set_result(i)
+                    break
+            else:
+                continue
+            break
+        sync.set_flag(1, False)
+        while not sync.flag[0]:
+            utime.sleep(0.5)
+        return i
+    
+    def read_hsensor_non_connected(self):
+        data = []
+        for pin in self.sensor_pin[1]:
+            set_mux(hsensor_assignment.get(pin))
+            utime.sleep(0.1)
+            data.append(hsensor.read_u16())
+        return data
+    
+    def find_valve(self):
+        pass
 
 
 def read_current_weather():
@@ -165,6 +199,7 @@ class StateMachine:
             if next_handler is None:
                 print("done")
                 break
+        self.sync.set_flag2(False)
             
     def write_init_file(self):
         """
@@ -242,7 +277,7 @@ class StateMachine:
             #        for zz in g:
             #            file.write(zz)
             file.write("\n")
-        if not self.sync.run_state_machine:
+        if not self.sync.flag:
             return None
         return self.idle
     
@@ -255,9 +290,11 @@ def input_activity(sync, pots):
         sel = read_buttons.run_selection("show", sync.return_data, True, extra_item={"name":"Breakup", "state":False, "position":"end"})
         if sel == "Breakup":
             if read_buttons.run_selection("Breakup", ["Yes", "No"]) == "Yes":
-                sync.set_run_sm(False) # kill state machien at suitable time
+                sync.set_flag(False) # kill state machine at suitable time
                 read_buttons.print_to_display("Waiting")
                 break
+    while sync.flag2:
+        time.sleep(0.5)
         
         
 
@@ -267,8 +304,8 @@ if __name__ == "__main__":
     pots.add_pot({'Pot Size': 'HUGE', 'Humidity': 'WET', 'Actuator Pin': 'G', 'ID': '2', 'Sensor Pin': 'E'})
     pots.add_pot({'Pot Size': 'HUGE', 'Humidity': 'WET', 'Actuator Pin': 'H', 'ID': '3', 'Sensor Pin': 'G'})
     
-    sync = Sync(pots.return_pot_ids())
-    sync.set_run_sm(True)
+    sync = Sync.SyncStateMachine(pots.return_pot_ids())
+    sync.set_flag(True)
     
     m = StateMachine(pots.pots, {"Start Time": "8", "End Time": "20"}, sync)
     second_thread = _thread.start_new_thread(m.run_machine, ())

@@ -2,7 +2,7 @@ from read_buttons import run_selection, print_to_display, sleep_and_wait
 from pots import Pots, StateMachine, input_activity
 import utime
 import time, _thread
-from Sync_thread import Sync
+import Sync_thread
 
 class MenuObject:
     def __init__(self, name, slaves, short_name, last=False):
@@ -21,36 +21,8 @@ class MenuObject:
         for i in self.slaves:
             if i.name == name:
                 return i
-    
-    def hide_slaves(self, *indices):
-        sl = []
-        for i, slave in enumerate(self.slaves):
-            if i in indices:
-                self.hidden_slaves[i] = slave
-            else:
-                sl.append(slave)
-        self.slaves = sl
-                
-        
-    def hide_none(self):
-        if len(self.hidden_slaves) > 0:
-            for key, val in self.hidden_slaves.items():
-                if val not in self.slaves:
-                    self.slaves.insert(key, val)
 
 
-def pre_check(func):
-    def wrapper(master_order):
-        if len(master_order) == 1:
-            if len(pots.pots) == 0:
-                master_order[0].hide_slaves(1, 2)
-            else:
-                master_order[0].hide_none()
-        return func(master_order)    
-    return wrapper
-        
-
-@pre_check
 def menu(master_order):
     while True:
         master = master_order[-1]
@@ -65,9 +37,9 @@ def menu(master_order):
                 del master_order[-1]
         else:
             if master.slaves is None:
-                master_order = yield master_order, "REMOVE ALL"
                 print_to_display("SUCCESS")
                 utime.sleep(1)
+                master_order = yield master_order, master_order[-1].name
             else:
                 sel = {key: None for key in [x[0] for x in master.slaves.values()]}
                 for i in range(len(master.slaves)):
@@ -90,20 +62,25 @@ def menu(master_order):
 
 
 def main():
-    execute = dict(zip(["ADD POT", "REMOVE SINGLE", "RUN", "REMOVE ALL"], [pots.add_pot, pots.remove_pot, None, pots.reset_to_standard]))
+    execute = dict(zip(["ADD POT", "REMOVE SINGLE", "RUN", "REMOVE ALL", "FIND SENSOR", "FIND VALVE"],
+                       [pots.add_pot, pots.remove_pot, None, pots.reset_to_standard, pots.find_hsensor, pots.find_valve]))
     a = menu([main_menu])
     order, sel = next(a)
     while True:
         if order[-1].name == "RUN":
-            sync = Sync(pots.return_pot_ids())
-            sync.set_run_sm(True)
+            sync = Sync_thread.SyncStateMachine(pots.return_pot_ids())
+            sync.set_flag(True)
+            sync.set_flag2(True)
             m = StateMachine(pots.pots, sel, sync)
             second_thread = _thread.start_new_thread(m.run_machine, ())
             input_activity(sync, pots)
         else:
             print(order[-1].name)
             print(sel)
-            execute[order[-1].name](sel)
+            ans = execute[order[-1].name](sel)
+            if ans is not None:
+                print(ans)
+            print("reached")
         order, sel = a.send([main_menu])
 
 
@@ -131,6 +108,9 @@ if __name__ == "__main__":
                          slaves={key: val for key, val in enumerate(zip(["ID", "Humidity", "Pot Size", "Actuator Pin", "Sensor Pin"],
                                                                         [Pots.iden[1], Pots.target_hum, Pots.pot_size, Pots.actuator_pin[1], Pots.sensor_pin[1]]))},
                          last=True)
-
-    main_menu = MenuObject(name="MAIN MENU", short_name="MAMU", slaves=[add_pot, remove_pot, run_machine])
+    
+    find_valve = MenuObject(name="FIND VALVE", short_name="FD VAL", slaves=None, last=True)
+    find_sensor = MenuObject(name="FIND SENSOR", short_name="FD SEN", slaves=None, last=True)
+    find_hardware = MenuObject(name="FIND HARDWARE", short_name="FD HAWA", slaves=[find_sensor, find_valve])
+    main_menu = MenuObject(name="MAIN MENU", short_name="MAMU", slaves=[add_pot, remove_pot, run_machine, find_hardware])
     main()

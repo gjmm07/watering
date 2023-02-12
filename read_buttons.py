@@ -14,6 +14,25 @@ i2c = I2C(0, sda=Pin(20), scl=Pin(21), freq=100000)
 # Initialisierung LCD über I2C
 lcd = I2cLcd(i2c, 0x27, 2, 16)
 
+
+def waiting(sync, text="CALC"):
+    lcd.clear()
+    lcd.putstr(text)
+    counter, max_counter = 1, 6
+    while sync.flag[0]:
+        lcd.putchar(".")
+        utime.sleep(0.5)
+        counter += 1
+        if counter >= max_counter:
+            counter = 1
+            lcd.clear()
+            lcd.putstr(text)
+    lcd.clear()
+    lcd.putstr(str(sync.result))
+    utime.sleep(0.5)
+    sync.set_flag(0, False)
+        
+        
 def print_to_display(text):
     lcd.clear()
     lcd.putstr(text)
@@ -28,6 +47,7 @@ def update_iteritems(func, control, kwargs):
     
 
 def run_selection(header, iter_items, rw_control=False, timeout=20, **kwargs):
+    lcd.clear()
     if isinstance(iter_items, list): 
         if len(iter_items) == 0:
             return

@@ -8,10 +8,10 @@ s0 = Pin(16, Pin.OUT)
 s1 = Pin(17, Pin.OUT)
 s2 = Pin(18, Pin.OUT)
 
-s0_h = Pin(2, Pin.OUT)
-s1_h = Pin(4, Pin.OUT)
-s2_h = Pin(3, Pin.OUT)
-analog = ADC(27)
+s0_h = Pin(4, Pin.OUT)
+s1_h = Pin(5, Pin.OUT)
+s2_h = Pin(6, Pin.OUT)
+analog = ADC(26)
 
 lst = [(0, 0, 0),
        (0, 1, 1),
@@ -57,7 +57,8 @@ def read_sensor():
             print(i)
             print(analog.read_u16())
 
-switch_all()
+
+read_sensor()
     
 
 
