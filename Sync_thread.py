@@ -1,4 +1,4 @@
-class Sync:
+class Flags:
     def __init__(self):
         self.flag = {}
 
@@ -15,9 +15,14 @@ class Sync:
                 self.flag[dict_key] = value
         else:
             raise ValueError("Value Not Allowed")
+    
+    def __getitem__(self, item):
+        item = item.upper()
+        if item in self.flag.keys():
+            return self.flag[item]
 
 
-class SyncStateMachine(Sync):
+class SyncStateMachine(Flags):
     def __init__(self, ids=None):
         super().__init__()
         self.temp = 0
@@ -38,7 +43,7 @@ class SyncStateMachine(Sync):
                                                            ["pot{iden}".format(iden=iden) for iden in self.pot_ids]],
                                                           [self.temp, self.air_hum, self.pressure] + self.pot_hum)]
     
-class SyncSearch(Sync):
+class SyncSearch(Flags):
     def __init__(self):
         super().__init__()
         self.result = None

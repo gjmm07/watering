@@ -112,7 +112,7 @@ class Pots:
                 continue
             break
         sync["Display"] = False
-        while sync.flag["SEARCH"]:
+        while sync["SEARCH"]:
             utime.sleep(0.5)
         return i
     
@@ -277,7 +277,7 @@ class StateMachine:
             #        for zz in g:
             #            file.write(zz)
             file.write("\n")
-        if not self.sync.flag["STATE MACHINE"]:
+        if not self.sync["STATE MACHINE"]:
             return None
         return self.idle
     
@@ -293,7 +293,7 @@ def input_activity(sync, pots):
                 sync["State Machine"] = False # kill state machine at suitable time
                 read_buttons.print_to_display("Waiting")
                 break
-    while sync.flag["INPUT ACT"]:
+    while sync["INPUT ACT"]:
         time.sleep(0.5)
         
         

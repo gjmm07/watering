@@ -19,7 +19,7 @@ def waiting(sync, text="CALC"):
     lcd.clear()
     lcd.putstr(text)
     counter, max_counter = 1, 6
-    while sync.flag["DISPLAY"]:
+    while sync["DISPLAY"]:
         lcd.putchar(".")
         utime.sleep(0.5)
         counter += 1
