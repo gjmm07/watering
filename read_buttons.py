@@ -19,7 +19,7 @@ def waiting(sync, text="CALC"):
     lcd.clear()
     lcd.putstr(text)
     counter, max_counter = 1, 6
-    while sync.flag[0]:
+    while sync.flag["DISPLAY"]:
         lcd.putchar(".")
         utime.sleep(0.5)
         counter += 1
@@ -30,7 +30,7 @@ def waiting(sync, text="CALC"):
     lcd.clear()
     lcd.putstr(str(sync.result))
     utime.sleep(0.5)
-    sync.set_flag(0, False)
+    sync["Search"] = False
         
         
 def print_to_display(text):

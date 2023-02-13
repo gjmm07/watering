@@ -69,8 +69,8 @@ def main():
     while True:
         if order[-1].name == "RUN":
             sync = Sync_thread.SyncStateMachine(pots.return_pot_ids())
-            sync.set_flag(True)
-            sync.set_flag2(True)
+            sync.add_flag("input act", "State Machine")
+            sync["all"] = True
             m = StateMachine(pots.pots, sel, sync)
             second_thread = _thread.start_new_thread(m.run_machine, ())
             input_activity(sync, pots)

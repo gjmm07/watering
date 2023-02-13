@@ -94,9 +94,9 @@ class Pots:
         return len(self.pots)
     
     def find_hsensor(self, *args):
-        sync = Sync_thread.SyncSearch(2)
-        sync.set_flag(0, True)
-        sync.set_flag(1, True)
+        sync = Sync_thread.SyncSearch()
+        sync.add_flag("Search", "Display")
+        sync["all"] = True
         second_thread = _thread.start_new_thread(read_buttons.waiting, (sync, "CIR"))
         length, lim = 5, 1000
         old_data = self.read_hsensor_non_connected()
@@ -111,8 +111,8 @@ class Pots:
             else:
                 continue
             break
-        sync.set_flag(1, False)
-        while not sync.flag[0]:
+        sync["Display"] = False
+        while sync.flag["SEARCH"]:
             utime.sleep(0.5)
         return i
     
@@ -199,7 +199,7 @@ class StateMachine:
             if next_handler is None:
                 print("done")
                 break
-        self.sync.set_flag2(False)
+        self.sync["Input Act"] = False
             
     def write_init_file(self):
         """
@@ -277,7 +277,7 @@ class StateMachine:
             #        for zz in g:
             #            file.write(zz)
             file.write("\n")
-        if not self.sync.flag:
+        if not self.sync.flag["STATE MACHINE"]:
             return None
         return self.idle
     
@@ -290,10 +290,10 @@ def input_activity(sync, pots):
         sel = read_buttons.run_selection("show", sync.return_data, True, extra_item={"name":"Breakup", "state":False, "position":"end"})
         if sel == "Breakup":
             if read_buttons.run_selection("Breakup", ["Yes", "No"]) == "Yes":
-                sync.set_flag(False) # kill state machine at suitable time
+                sync["State Machine"] = False # kill state machine at suitable time
                 read_buttons.print_to_display("Waiting")
                 break
-    while sync.flag2:
+    while sync.flag["INPUT ACT"]:
         time.sleep(0.5)
         
         
@@ -304,8 +304,9 @@ if __name__ == "__main__":
     pots.add_pot({'Pot Size': 'HUGE', 'Humidity': 'WET', 'Actuator Pin': 'G', 'ID': '2', 'Sensor Pin': 'E'})
     pots.add_pot({'Pot Size': 'HUGE', 'Humidity': 'WET', 'Actuator Pin': 'H', 'ID': '3', 'Sensor Pin': 'G'})
     
-    sync = Sync.SyncStateMachine(pots.return_pot_ids())
-    sync.set_flag(True)
+    sync = Sync_thread.SyncStateMachine(pots.return_pot_ids())
+    sync.add_flag("input act", "State Machine")
+    sync["all"] = True
     
     m = StateMachine(pots.pots, {"Start Time": "8", "End Time": "20"}, sync)
     second_thread = _thread.start_new_thread(m.run_machine, ())
