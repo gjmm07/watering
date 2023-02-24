@@ -58,7 +58,7 @@ def read_sensor():
             print(analog.read_u16())
 
 
-read_sensor()
+switch_all()
     
 
 

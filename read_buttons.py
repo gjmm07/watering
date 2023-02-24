@@ -101,6 +101,10 @@ def run_selection(header, iter_items, rw_control=False, timeout=20, **kwargs):
     return "TIMED OUT"
 
 
+def run_selection_direct_return(iter_items, timeout):
+    pass
+
+
 def sleep_and_wait():
     lcd.clear()
     lcd.backlight_off()

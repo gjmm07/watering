@@ -45,12 +45,12 @@ hsensor_assignment = {"A": (s0_hsensor.low, s1_hsensor.low, s2_hsensor.low),
                       "F": (s0_hsensor.high, s1_hsensor.high, s2_hsensor.low),
                       "G": (s0_hsensor.high, s1_hsensor.high, s2_hsensor.high),
                       "H": (s0_hsensor.high, s1_hsensor.low, s2_hsensor.high)}
-actuator_assignment = {"A": (s0_act.low, s1_act.high, s2_act.low),
-                       "B": (s0_act.low, s1_act.high, s2_act.low),
+actuator_assignment = {"A": (s0_act.low, s1_act.low, s2_act.low),
+                       "B": (s0_act.low, s1_act.high, s2_act.high),
                        "C": (s0_act.low, s1_act.high, s2_act.low),
                        "D": (s0_act.high, s1_act.low, s2_act.low),
                        "E": (s0_act.low, s1_act.low, s2_act.high),
-                       "F": (s0_act.high, s1_act.low, s2_act.low),
+                       "F": (s0_act.high, s1_act.high, s2_act.low),
                        "G": (s0_act.high, s1_act.high, s2_act.high),
                        "H": (s0_act.high, s1_act.low, s2_act.high)}
 
@@ -75,11 +75,23 @@ class Pots:
         for lst, switch_item in zip([self.iden, self.sensor_pin, self.actuator_pin], [dict_.get("ID"), dict_.get("Sensor Pin"), dict_.get("Actuator Pin")]):
             self.switch_sides(lst, switch_item, False)
     
+    def change_order(self, lst, **kwargs):
+        try:
+            start_item = lst[kwargs["index"]]
+        except KeyError:
+            start_item = kwargs["name"]
+        if start_item in lst:
+            idx = self.actuator_pin[1].index(start_item)
+            for i in range(idx):
+                zz = lst.pop(0)
+                lst.append(zz)
+    
     def switch_sides(self, lst, item, forward):
         x, y = (0, 1) if forward else (1, 0)
         lst[x].append(item)
         lst[x].sort()
         lst[y].remove(item)
+        lst[y].sort()
     
     def reset_to_standard(self, *a):
         for lst in [self.actuator_pin, self.sensor_pin, self.iden]:
@@ -98,8 +110,9 @@ class Pots:
         sync.add_flag("Search", "Display")
         sync["all"] = True
         second_thread = _thread.start_new_thread(read_buttons.waiting, (sync, "CIR"))
-        length, lim = 5, 1000
+        lim = 1000
         old_data = self.read_hsensor_non_connected()
+        # maybe timeout?
         while True:
             data = self.read_hsensor_non_connected()
             bound = [abs(x - y) > lim for x, y in zip(old_data, data)]
@@ -110,6 +123,7 @@ class Pots:
                     break
             else:
                 continue
+            self.change_order(self.sensor_pin[1], index=i)
             break
         sync["Display"] = False
         while sync["SEARCH"]:
@@ -124,9 +138,23 @@ class Pots:
             data.append(hsensor.read_u16())
         return data
     
-    def find_valve(self):
-        pass
-
+    def find_valve(self, *args):
+        lst = self.sensor_pin[0] + self.sensor_pin[1]
+        idx = 0
+        valve_pin = None
+        while True:
+            sel = read_buttons.run_selection("Valve Pins", lst[idx:] + lst[:idx])
+            if sel in ["BACK", "TIMED OUT"]:
+                self.change_order(self.actuator_pin[1], name=valve_pin)
+                break
+            valve_pin = sel
+            idx = lst.index(sel)
+            print(sel, idx)
+            set_mux(actuator_assignment.get(sel))
+            disable_act.low()
+            time.sleep(0.5)
+            disable_act.high()
+            
 
 def read_current_weather():
     return [sample for sample in (x.split(token)[0] for x, token in zip(sensorBME.values, ["C", "hPa", "%"]))]
@@ -304,13 +332,14 @@ if __name__ == "__main__":
     pots.add_pot({'Pot Size': 'HUGE', 'Humidity': 'WET', 'Actuator Pin': 'G', 'ID': '2', 'Sensor Pin': 'E'})
     pots.add_pot({'Pot Size': 'HUGE', 'Humidity': 'WET', 'Actuator Pin': 'H', 'ID': '3', 'Sensor Pin': 'G'})
     
-    sync = Sync_thread.SyncStateMachine(pots.return_pot_ids())
-    sync.add_flag("input act", "State Machine")
-    sync["all"] = True
+    print(pots.find_valve())
+    #sync = Sync_thread.SyncStateMachine(pots.return_pot_ids())
+    #sync.add_flag("input act", "State Machine")
+    #sync["all"] = True
     
-    m = StateMachine(pots.pots, {"Start Time": "8", "End Time": "20"}, sync)
-    second_thread = _thread.start_new_thread(m.run_machine, ())
-    input_activity(sync, pots)
+    #m = StateMachine(pots.pots, {"Start Time": "8", "End Time": "20"}, sync)
+    #second_thread = _thread.start_new_thread(m.run_machine, ())
+    #input_activity(sync, pots)
     
     
     

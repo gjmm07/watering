@@ -50,7 +50,6 @@ def menu(master_order):
                         del master_order[-1]
                         break
                     elif selection == "TIMED OUT":
-                        # todo: Time Out can be inserted into the pots to run
                         sleep_and_wait()
                     sel[master.slaves[i][0]] = selection
                 else:
