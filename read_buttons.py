@@ -21,12 +21,19 @@ def waiting(sync, text="CALC"):
     counter, max_counter = 1, 6
     while sync["DISPLAY"]:
         lcd.putchar(".")
-        utime.sleep(0.5)
         counter += 1
         if counter >= max_counter:
             counter = 1
             lcd.clear()
             lcd.putstr(text)
+        start_time = time.time()
+        while time.time() - start_time < 0.5:
+            if not back_button.value():
+                break
+        else:
+            continue
+        print("thread killed")
+        break
     lcd.clear()
     lcd.putstr(str(sync.result))
     utime.sleep(0.5)
@@ -96,13 +103,14 @@ def run_selection(header, iter_items, rw_control=False, timeout=20, **kwargs):
                 lcd.clear()
                 lcd.putstr(header + "\n" + selection)
                 update_time = time.time()
-        utime.sleep(0.001)
         old_back, old_select, old_clock = back, select, clock
     return "TIMED OUT"
 
 
-def run_selection_direct_return(iter_items, timeout):
-    pass
+def read_select():
+    while True:
+        if not select_button.value():
+            print("pressed")
 
 
 def sleep_and_wait():
@@ -122,6 +130,7 @@ def sleep_and_wait():
 
 
 if __name__ == "__main__":
+    # read_select()
     print(run_selection("abcd", ["A", "B", "C", "D"]))
 
 

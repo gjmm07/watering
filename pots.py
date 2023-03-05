@@ -1,4 +1,4 @@
-from machine import Pin, ADC, I2C, SPI
+from machine import Pin, ADC, I2C, SPI, UART
 import utime
 import time
 import sdcard
@@ -17,12 +17,14 @@ sensorBME = BME280(i2c=i2c)
 
 # wlan = network.WLAN(network.STA_IF)
 
-spi=SPI(1,baudrate=40000000,sck=Pin(14),mosi=Pin(15),miso=Pin(8))
-sd=sdcard.SDCard(spi,Pin(9))
+#spi=SPI(1,baudrate=40000000,sck=Pin(14),mosi=Pin(15),miso=Pin(8))
+#sd=sdcard.SDCard(spi,Pin(9))
 # Create a instance of MicroPython Unix-like Virtual File System (VFS),
-vfs=os.VfsFat(sd)
+#vfs=os.VfsFat(sd)
 # Mount the SD card
-os.mount(sd,'/sd')
+#os.mount(sd,'/sd')
+
+uart = UART(1, baudrate=9600, tx=Pin(8), rx=Pin(9))
 
 s0_hsensor = Pin(4, Pin.OUT)
 s1_hsensor = Pin(5, Pin.OUT)
@@ -69,11 +71,15 @@ class Pots:
         for lst, switch_item in zip([self.iden, self.sensor_pin, self.actuator_pin], [definition.get("ID"), definition.get("Sensor Pin"), definition.get("Actuator Pin")]):
             self.switch_sides(lst, switch_item, True)
         self.pots.append(definition)
+        
+    def add_reference(self, definition):
+        print(definition)
 
     def remove_pot(self, definition):
         dict_ = [x for x in self.pots if x.get("ID") == definition.get("ID")][0]
         for lst, switch_item in zip([self.iden, self.sensor_pin, self.actuator_pin], [dict_.get("ID"), dict_.get("Sensor Pin"), dict_.get("Actuator Pin")]):
             self.switch_sides(lst, switch_item, False)
+        self.pots = [x for x in self.pots if x.get("ID") != definition.get("ID")]
     
     def change_order(self, lst, **kwargs):
         try:
@@ -98,6 +104,7 @@ class Pots:
             lst[1].extend(lst[0])
             lst[1].sort()
             lst[0].clear()
+        self.pots = []
             
     def return_pot_ids(self):
         return [pot.get("ID") for pot in self.pots]
@@ -113,7 +120,7 @@ class Pots:
         lim = 1000
         old_data = self.read_hsensor_non_connected()
         # maybe timeout?
-        while True:
+        while sync["SEARCH"]:
             data = self.read_hsensor_non_connected()
             bound = [abs(x - y) > lim for x, y in zip(old_data, data)]
             old_data = data
@@ -128,6 +135,7 @@ class Pots:
         sync["Display"] = False
         while sync["SEARCH"]:
             utime.sleep(0.5)
+        print("thread2 killed")
         return i
     
     def read_hsensor_non_connected(self):
@@ -154,6 +162,17 @@ class Pots:
             disable_act.low()
             time.sleep(0.5)
             disable_act.high()
+            
+    def flush_system(self, *_):
+        print("abc")
+        pump.high()
+        disable_act.low()
+        for valve in self.actuator_pin[0]:
+            print(valve)
+            set_mux(actuator_assignment.get(valve))
+            utime.sleep(0.5)
+        disable_act.high()
+        pump.low()
             
 
 def read_current_weather():
@@ -206,19 +225,44 @@ class StateMachine:
         self.pots_to_run = pots_to_run
         self.hsensor_data = [[] for _ in range(len(pots_to_run))]
         self.watered_pots = [False for _ in range(len(pots_to_run))]
+        self.current_weahter = []
         self.cur_time = {}
         self.sync = sync
         self.update_time()
         
     def update_time(self):
         self.cur_time = {name: val for name, val in zip(["year", "month", "day", "hour", "minute"], time.localtime())}
-        
+    
+    def init_file(func):
+        def wrapper(self):
+            print("init file")
+            uart.write("init file\r\n")
+            uart.write("TIME \r\n")
+            for key, value in self.cur_time.items():
+                uart.write(key + ": ")
+                uart.write(str(value) + "\r\n")
+            uart.write("\r\nPOTS\r\n")
+            for pot in self.pots_to_run:
+                for key, value in pot.items():
+                    uart.write(key + ": " + value)
+                    uart.write("\r\n")
+            utime.sleep(0.2) # for good data transmission
+            uart.write("\r\nDATA\r\n")
+            for item in ["Temp", "Pres", "AHum"]:
+                uart.write(item + "\r\n")
+            for item in [pot["ID"] for pot in self.pots_to_run]:
+                uart.write(item + "\r\n")
+                uart.write("watered {} \r\n".format(item))
+                uart.write("humidity {} \r\n".format(item))
+            uart.write("\r\n end\r\n")
+            return func(self)
+        return wrapper
+    
+    @init_file
     def run_machine(self):
         """
         runs the watering machine
         """
-        # todo: can be executed once
-        self.write_init_file()
         next_handler = self.read_hsensors()
         while True:
             utime.sleep(2)
@@ -228,20 +272,6 @@ class StateMachine:
                 print("done")
                 break
         self.sync["Input Act"] = False
-            
-    def write_init_file(self):
-        """
-        Writes an init file on the sd card
-        """
-        filename = "{}_{}_{}_init.txt".format(self.cur_time["day"], self.cur_time["month"], self.cur_time["year"])
-        with open("/sd/"+ filename, "w") as file:
-            for pot in self.pots_to_run: 
-                file.write("Pot ID: {}, Pot Size: {}, Humidity {} \n".format(pot["ID"], pot["Pot Size"], pot["Humidity"]))
-            file.write("\n")
-            file.write("{}: {}\n\n".format(self.cur_time["hour"], self.cur_time["minute"]))
-            for name in ["hour", "minute", "temperature",
-                         "air_pressure", "watered pots in timestep {}x".format(len(self.pots_to_run))]:
-                file.write(name + "\n")
         
     def read_hsensors(self):
         """
@@ -254,9 +284,17 @@ class StateMachine:
                 for x in self.hsensor_data:
                     x.pop(0)
             self.hsensor_data[i].append(hsensor.read_u16())
+        return self.read_weather
+    
+    def read_weather(self):
+        """
+        reads weather data
+        """
+        self.current_weather = [sample for sample in (x.split(token)[0] for x, token in zip(sensorBME.values, ["C", "hPa", "%"]))]
+        self.sync.write_weather(*self.current_weather, [sample[-1] for sample in self.hsensor_data])
         if not self.start_time < self.cur_time["hour"] < self.end_time:
             # do not switch anything
-            return self.save_data_sd
+            return self.idle
         return self.switch_actuators
 
     def switch_actuators(self):
@@ -277,37 +315,37 @@ class StateMachine:
                 disable_act.high()
         pump.low()
         utime.sleep(0.5)
-        return self.save_data_sd
-
+        return self.idle
+    
+    def write_data(func):
+        """
+        writes data to bluetooth uart
+        """
+        def wrapper(self):
+            print("write data")
+            uart.write("write data \r\n")
+            for key, value in self.cur_time.items():
+                uart.write(key + ": ")
+                uart.write(str(value) + "\r\n")
+            for key, val in zip(["Temp", "Pres", "AHum"], self.current_weather):
+                uart.write(key + ": ")
+                uart.write(str(val) + "\r\n")
+            for iden, hum, watered_pot in zip([dict_["ID"] for dict_ in self.pots_to_run], self.hsensor_data, self.watered_pots):
+                uart.write("ID {}: ".format(iden))
+                uart.write("watered" if watered_pot else "not watered")
+                uart.write(str(hum[-1]) + "\r\n")
+            uart.write("\r\n")
+            return func(self)
+        return wrapper
+    
+    @write_data
     def idle(self):
         disable_act.high()
         pump.low()
         utime.sleep(1)
-        return self.read_hsensors
-
-    def save_data_sd(self):
-        """
-        Reads the wheather data, wheather forecast and saves everything to sd-card
-        """
-        cur_weather = read_current_weather()
-        self.sync.write_weather(*cur_weather, [sample[-1] for sample in self.hsensor_data])
-        #gen_forecast = acquire_data("https://wttr.in/Cologne?format=j1", "time", "humidity", "precipMM", "pressure",
-        #           "tempC") #, "winddirDegree", "windspeedKmph")
-
-        filename = "{}_{}_{}_data.txt".format(self.cur_time["day"], self.cur_time["month"], self.cur_time["year"])
-        with open("/sd/"+ filename, "a+") as file:
-            for g in cur_weather + [sample[-1] for sample in self.hsensor_data]:
-                print(g)
-            #for g in gen_forecast:
-            #    if type(g) == str:
-            #        file.write(g)
-            #    else:
-            #        for zz in g:
-            #            file.write(zz)
-            file.write("\n")
         if not self.sync["STATE MACHINE"]:
             return None
-        return self.idle
+        return self.read_hsensors
     
 
 def input_activity(sync, pots):
@@ -332,14 +370,14 @@ if __name__ == "__main__":
     pots.add_pot({'Pot Size': 'HUGE', 'Humidity': 'WET', 'Actuator Pin': 'G', 'ID': '2', 'Sensor Pin': 'E'})
     pots.add_pot({'Pot Size': 'HUGE', 'Humidity': 'WET', 'Actuator Pin': 'H', 'ID': '3', 'Sensor Pin': 'G'})
     
-    print(pots.find_valve())
-    #sync = Sync_thread.SyncStateMachine(pots.return_pot_ids())
-    #sync.add_flag("input act", "State Machine")
-    #sync["all"] = True
+    # pots.flush_system()
+    sync = Sync_thread.SyncStateMachine(pots.return_pot_ids())
+    sync.add_flag("input act", "State Machine")
+    sync["all"] = True
     
-    #m = StateMachine(pots.pots, {"Start Time": "8", "End Time": "20"}, sync)
-    #second_thread = _thread.start_new_thread(m.run_machine, ())
-    #input_activity(sync, pots)
+    m = StateMachine(pots.pots, {"Start Time": "8", "End Time": "20"}, sync)
+    second_thread = _thread.start_new_thread(m.run_machine, ())
+    input_activity(sync, pots)
     
     
     

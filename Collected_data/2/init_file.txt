@@ -1,0 +1,46 @@
+minute: 22
+year: 2023
+month: 3
+day: 5
+hour: 17
+Temp: 21.69
+Pres: 1004.82
+AHum: 37.15
+ID 1: watered400
+ID 2: watered400
+ID 3: watered496
+TIME
+minute: 23
+year: 2023
+month: 3
+day: 5
+hour: 17
+POTS
+Pot Size: HUGE
+ID: 1
+Humidity: WET
+Actuator Pin: E
+Sensor Pin: F
+Pot Size: HUGE
+ID: 2
+Humidity: WET
+Actuator Pin: G
+Sensor Pin: E
+Pot Size: HUGE
+ID: 3
+Humidity: WET
+Actuator Pin: H
+Sensor Pin: G
+DATA
+Temp
+Pres
+AHum
+1
+watered 1
+humidity 1
+2
+watered 2
+humidity 2
+3
+watered 3
+humidity 3

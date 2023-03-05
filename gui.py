@@ -21,8 +21,36 @@ class MenuObject:
         for i in self.slaves:
             if i.name == name:
                 return i
+    
+    def hide_slaves(self, *names):
+        mask = [x not in names for x in self.return_slaves_name()]
+        hidden, non_hidden = {}, []
+        for i, n_mask in enumerate(mask):
+            if n_mask:
+                non_hidden.append(self.slaves[i])
+            else:
+                hidden[i] = self.slaves[i]
+        self.slaves = non_hidden
+        self.hidden_slaves = hidden
+        
+    def hide_none(self):
+        for index, slave in self.hidden_slaves.items():
+            self.slaves.insert(index, slave)
+            
 
 
+def hide_non_executable(func):
+    def wrapper(master_order):
+        if (obj:=master_order[-1]).name == "MAIN MENU":
+            if len(pots) == 0:
+                obj.hide_slaves("REMOVE POT", "RUN")
+            else:
+                obj.hide_none()
+        return func(master_order)
+    return wrapper
+
+
+@hide_non_executable
 def menu(master_order):
     while True:
         master = master_order[-1]
@@ -61,8 +89,8 @@ def menu(master_order):
 
 
 def main():
-    execute = dict(zip(["ADD POT", "REMOVE SINGLE", "RUN", "REMOVE ALL", "FIND SENSOR", "FIND VALVE"],
-                       [pots.add_pot, pots.remove_pot, None, pots.reset_to_standard, pots.find_hsensor, pots.find_valve]))
+    execute = dict(zip(["ADD POT", "ADD REFERENCE", "REMOVE SINGLE", "RUN", "REMOVE ALL", "FIND SENSOR", "FIND VALVE", "FLUSH SYSTEM"],
+                       [pots.add_pot, pots.add_reference, pots.remove_pot, None, pots.reset_to_standard, pots.find_hsensor, pots.find_valve, pots.flush_system]))
     a = menu([main_menu])
     order, sel = next(a)
     while True:
@@ -76,10 +104,7 @@ def main():
         else:
             print(order[-1].name)
             print(sel)
-            ans = execute[order[-1].name](sel)
-            if ans is not None:
-                print(ans)
-            print("reached")
+            execute[order[-1].name](sel)
         order, sel = a.send([main_menu])
 
 
@@ -107,9 +132,13 @@ if __name__ == "__main__":
                          slaves={key: val for key, val in enumerate(zip(["ID", "Humidity", "Pot Size", "Actuator Pin", "Sensor Pin"],
                                                                         [Pots.iden[1], Pots.target_hum, Pots.pot_size, Pots.actuator_pin[1], Pots.sensor_pin[1]]))},
                          last=True)
+    add_reference = MenuObject(name="ADD REFERENCE", short_name="AREF", slaves={0: ["ID", Pots.iden[1]], 1: ["Actuator Pin", Pots.actuator_pin[1]]}, last=True)
+    add = MenuObject(name="ADD", short_name="ADD", slaves=[add_pot, add_reference])
     
     find_valve = MenuObject(name="FIND VALVE", short_name="FD VAL", slaves=None, last=True)
     find_sensor = MenuObject(name="FIND SENSOR", short_name="FD SEN", slaves=None, last=True)
-    find_hardware = MenuObject(name="FIND HARDWARE", short_name="FD HAWA", slaves=[find_sensor, find_valve])
-    main_menu = MenuObject(name="MAIN MENU", short_name="MAMU", slaves=[add_pot, remove_pot, run_machine, find_hardware])
+    flush_system = MenuObject(name="FLUSH SYSTEM", short_name="FLSH SYS", slaves=None, last=True)
+    
+    find_hardware = MenuObject(name="FIND HARDWARE", short_name="FD HAWA", slaves=[find_sensor, find_valve, flush_system])
+    main_menu = MenuObject(name="MAIN MENU", short_name="MAMU", slaves=[add, remove_pot, run_machine, find_hardware])
     main()
