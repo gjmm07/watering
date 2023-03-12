@@ -173,11 +173,6 @@ class Pots:
             utime.sleep(0.5)
         disable_act.high()
         pump.low()
-            
-
-def read_current_weather():
-    return [sample for sample in (x.split(token)[0] for x, token in zip(sensorBME.values, ["C", "hPa", "%"]))]
-
 
 
 def activate_wifi(func):
@@ -216,6 +211,45 @@ def acquire_data(url, *args):
 def set_mux(pins):
     for pin in pins:
         pin()
+    
+    
+def write_serial(header=None, iterable=None):
+    if header is not None:
+        uart.write(header + "\r\n")
+    if iterable is not None:
+        if isinstance(iterable, dict):
+            for key, val in iterable.items():
+                uart.write("{key}: {val}, \r\n".format(key=key, val=val))
+        elif isinstance(iterable, list):
+            for item in iterable:
+                uart.write("{}, \r\n".format(item))
+    utime.sleep(0.2)
+    
+
+def write_init_file(func):
+    def wrapper(self):
+        print("init file")
+        write_serial("init file")
+        write_serial("TIME", self.cur_time)
+        write_serial("POTS")
+        for pot in self.pots_to_run:
+            write_serial(iterable=pot)
+        pot_ind = [pot["ID"] for pot in self.pots_to_run]
+        write_serial("DATA", ["hour", "minute", "Temp", "Pres", "AHum"] + [i for j in zip(["wat"+ind for ind in pot_ind], ["hum"+ind for ind in pot_ind]) for i in j])
+        write_serial("end")
+        return func(self)
+    return wrapper
+    
+
+def write_data(func):
+    def wrapper(self):
+        print("write data")
+        write_serial("write data")
+        write_serial("TIME", {"day": self.cur_time["day"], "month": self.cur_time["month"], "year": self.cur_time["year"]})
+        write_serial("DATA", [self.cur_time["hour"], self.cur_time["minute"]] + [i for j in zip(self.current_weather, self.watered_pots, [data[-1] for data in self.hsensor_data]) for i in j])
+        write_serial("end")
+        return func(self)
+    return wrapper
 
 
 class StateMachine:
@@ -233,32 +267,7 @@ class StateMachine:
     def update_time(self):
         self.cur_time = {name: val for name, val in zip(["year", "month", "day", "hour", "minute"], time.localtime())}
     
-    def init_file(func):
-        def wrapper(self):
-            print("init file")
-            uart.write("init file\r\n")
-            uart.write("TIME \r\n")
-            for key, value in self.cur_time.items():
-                uart.write(key + ": ")
-                uart.write(str(value) + "\r\n")
-            uart.write("\r\nPOTS\r\n")
-            for pot in self.pots_to_run:
-                for key, value in pot.items():
-                    uart.write(key + ": " + value)
-                    uart.write("\r\n")
-            utime.sleep(0.2) # for good data transmission
-            uart.write("\r\nDATA\r\n")
-            for item in ["Temp", "Pres", "AHum"]:
-                uart.write(item + "\r\n")
-            for item in [pot["ID"] for pot in self.pots_to_run]:
-                uart.write(item + "\r\n")
-                uart.write("watered {} \r\n".format(item))
-                uart.write("humidity {} \r\n".format(item))
-            uart.write("\r\n end\r\n")
-            return func(self)
-        return wrapper
-    
-    @init_file
+    @write_init_file
     def run_machine(self):
         """
         runs the watering machine
@@ -316,27 +325,6 @@ class StateMachine:
         pump.low()
         utime.sleep(0.5)
         return self.idle
-    
-    def write_data(func):
-        """
-        writes data to bluetooth uart
-        """
-        def wrapper(self):
-            print("write data")
-            uart.write("write data \r\n")
-            for key, value in self.cur_time.items():
-                uart.write(key + ": ")
-                uart.write(str(value) + "\r\n")
-            for key, val in zip(["Temp", "Pres", "AHum"], self.current_weather):
-                uart.write(key + ": ")
-                uart.write(str(val) + "\r\n")
-            for iden, hum, watered_pot in zip([dict_["ID"] for dict_ in self.pots_to_run], self.hsensor_data, self.watered_pots):
-                uart.write("ID {}: ".format(iden))
-                uart.write("watered" if watered_pot else "not watered")
-                uart.write(str(hum[-1]) + "\r\n")
-            uart.write("\r\n")
-            return func(self)
-        return wrapper
     
     @write_data
     def idle(self):
