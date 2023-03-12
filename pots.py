@@ -60,6 +60,7 @@ actuator_assignment = {"A": (s0_act.low, s1_act.low, s2_act.low),
 class Pots:
     target_hum = ["WET", "MEDIUM", "DRY"]
     pot_size = ["HUGE", "MEDIUM", "SMALL"]
+    frequency = ["OFTEN", "MEDIUM", "RARELY"]
     actuator_pin = ([], ["A", "B", "C", "D", "E", "F", "G", "H"])
     sensor_pin = ([], ["A", "B", "C", "D", "E", "F", "G", "H"])
     iden = ([], ["1", "2", "3", "4", "5", "6", "7", "8"])
@@ -119,24 +120,23 @@ class Pots:
         second_thread = _thread.start_new_thread(read_buttons.waiting, (sync, "CIR"))
         lim = 1000
         old_data = self.read_hsensor_non_connected()
-        # maybe timeout?
+        # todo: maybe timeout?
         while sync["SEARCH"]:
             data = self.read_hsensor_non_connected()
             bound = [abs(x - y) > lim for x, y in zip(old_data, data)]
             old_data = data
-            for i, b in enumerate(bound):
-                if b:
-                    sync.set_result(i)
+            for name, bo in zip(self.sensor_pin[1], bound):
+                if bo:
+                    sync.set_result(name)
+                    print(name)
                     break
             else:
                 continue
-            self.change_order(self.sensor_pin[1], index=i)
+            self.change_order(self.sensor_pin[1], name=name)
             break
         sync["Display"] = False
         while sync["SEARCH"]:
             utime.sleep(0.5)
-        print("thread2 killed")
-        return i
     
     def read_hsensor_non_connected(self):
         data = []
@@ -246,7 +246,9 @@ def write_data(func):
         print("write data")
         write_serial("write data")
         write_serial("TIME", {"day": self.cur_time["day"], "month": self.cur_time["month"], "year": self.cur_time["year"]})
-        write_serial("DATA", [self.cur_time["hour"], self.cur_time["minute"]] + [i for j in zip(self.current_weather, self.watered_pots, [data[-1] for data in self.hsensor_data]) for i in j])
+        print(self.watered_pots, self.hsensor_data)
+        pot_data = [i for j in zip(self.watered_pots, [data[-1] for data in self.hsensor_data]) for i in j]
+        write_serial("DATA", [self.cur_time["hour"], self.cur_time["minute"]] + self.current_weather + pot_data)
         write_serial("end")
         return func(self)
     return wrapper
@@ -258,10 +260,12 @@ class StateMachine:
         self.start_time, self.end_time = int(times["Start Time"]), int(times["End Time"])
         self.pots_to_run = pots_to_run
         self.hsensor_data = [[] for _ in range(len(pots_to_run))]
-        self.watered_pots = [False for _ in range(len(pots_to_run))]
+        self.watered_pots = None
+        self.last_watered = [0 for _ in range(len(pots_to_run))]
         self.current_weahter = []
         self.cur_time = {}
         self.sync = sync
+        self.start_time_run = None
         self.update_time()
         
     def update_time(self):
@@ -286,6 +290,7 @@ class StateMachine:
         """
         reads humiditiy sensors
         """
+        self.start_time_run = time.time()
         for i, pot in enumerate(self.pots_to_run):
             set_mux(hsensor_assignment.get(pot.get("Sensor Pin")))
             utime.sleep(0.1)
@@ -301,8 +306,9 @@ class StateMachine:
         """
         self.current_weather = [sample for sample in (x.split(token)[0] for x, token in zip(sensorBME.values, ["C", "hPa", "%"]))]
         self.sync.write_weather(*self.current_weather, [sample[-1] for sample in self.hsensor_data])
-        if not self.start_time < self.cur_time["hour"] < self.end_time:
-            # do not switch anything
+        if not self.start_time < self.cur_time["hour"] < self.end_time or float(self.current_weather[0]) < 10:
+            # do nothing at night do nothing at low temperatures
+            self.watered_pots = [False for _ in range(len(self.pots_to_run))]
             return self.idle
         return self.switch_actuators
 
@@ -310,40 +316,48 @@ class StateMachine:
         """
         Depending on the read humidity, valves will be switched
         """
-        boundary = {"WET": 1000, "MEDIUM": 5000, "DRY": 10000}
+        hum_boundary = {"WET": 1000, "MEDIUM": 5000, "DRY": 10000}
+        last_wat_boundary = {"OFTEN": 10800, "MEDIUM": 43200, "RARELY": 259200} # makes 3h, 12h, 3 days
+        valve_open_time = {"HUGE": 1, "MEDIUM": 0.5, "SMALL": 0.2}
         self.watered_pots = [False for _ in range(len(self.pots_to_run))]
-        for i, hum, pot in zip(list(range(len(self.hsensor_data))), self.hsensor_data, self.pots_to_run):
-            if all(list(map(lambda x: x < boundary.get(pot.get("Humidity")), hum))):
-                # water pot
+        i = 0
+        for hum, hum_bound, act_pin, last_wat, last_wat_bound, open_time in zip(self.hsensor_data, [hum_boundary[x.get("Humidity")] for x in self.pots_to_run],
+                                                                                [x.get("Actuator Pin") for x in self.pots_to_run], self.last_watered,
+                                                                                [last_wat_boundary[x.get("Frequency")] for x in self.pots_to_run],
+                                                                                [valve_open_time[x.get("Pot Size")] for x in self.pots_to_run]):                                                                                
+            if all([pot_hum < hum_bound for pot_hum in hum]) and (t:=time.time()) - last_wat > last_wat_bound:
                 self.watered_pots[i] = True
+                self.last_watered[i] = t
+                # pump.high()
                 disable_act.low()
-                pump.high()
-                utime.sleep(0.5) #build up the pressure
-                set_mux(actuator_assignment.get(pot.get("Actuator Pin")))
-                utime.sleep(0.5) 
-                disable_act.high()
+                utime.sleep(0.5) # build up pressure
+                set_mux(actuator_assignment[act_pin])
+                utime.sleep(open_time) # keep valve open for time
+            i += 1
         pump.low()
-        utime.sleep(0.5)
+        disable_act.high()
         return self.idle
     
     @write_data
     def idle(self):
         disable_act.high()
         pump.low()
-        utime.sleep(1)
-        if not self.sync["STATE MACHINE"]:
-            return None
+        while time.time() - self.start_time_run < 10:
+            # wait at leat 2 minutes before next round
+            utime.sleep(0.5)
+            if not self.sync["STATE MACHINE"]:
+                return None
         return self.read_hsensors
     
 
 def input_activity(sync, pots):
-    # todo: show current condition in lcd display
     utime.sleep(1)
     while True:
         read_buttons.sleep_and_wait()
-        sel = read_buttons.run_selection("show", sync.return_data, True, extra_item={"name":"Breakup", "state":False, "position":"end"})
+        sel = read_buttons.run_selection("show", sync.return_data, True, extra_item={"name":"Breakup", "state":False, "position":"end"}) #todo: when executing iterator isn't updated quick enough
+        print(sel)
         if sel == "Breakup":
-            if read_buttons.run_selection("Breakup", ["Yes", "No"]) == "Yes":
+            if read_buttons.run_selection2("Breakup", ["Yes", "No"]) == "Yes":
                 sync["State Machine"] = False # kill state machine at suitable time
                 read_buttons.print_to_display("Waiting")
                 break
@@ -354,16 +368,16 @@ def input_activity(sync, pots):
 
 if __name__ == "__main__":
     pots = Pots()
-    pots.add_pot({'Pot Size': 'HUGE', 'Humidity': 'WET', 'Actuator Pin': 'E', 'ID': '1', 'Sensor Pin': 'F'})
-    pots.add_pot({'Pot Size': 'HUGE', 'Humidity': 'WET', 'Actuator Pin': 'G', 'ID': '2', 'Sensor Pin': 'E'})
-    pots.add_pot({'Pot Size': 'HUGE', 'Humidity': 'WET', 'Actuator Pin': 'H', 'ID': '3', 'Sensor Pin': 'G'})
+    pots.add_pot({'Pot Size': 'SMALL', 'Humidity': 'WET', "Frequency": "OFTEN", 'Actuator Pin': 'E', 'ID': '1', 'Sensor Pin': 'F'})
+    pots.add_pot({'Pot Size': 'SMALL', 'Humidity': 'WET', "Frequency": "OFTEN", 'Actuator Pin': 'G', 'ID': '2', 'Sensor Pin': 'E'})
+    pots.add_pot({'Pot Size': 'SMALL', 'Humidity': 'WET', "Frequency": "OFTEN", 'Actuator Pin': 'H', 'ID': '3', 'Sensor Pin': 'G'})
     
     # pots.flush_system()
     sync = Sync_thread.SyncStateMachine(pots.return_pot_ids())
     sync.add_flag("input act", "State Machine")
     sync["all"] = True
     
-    m = StateMachine(pots.pots, {"Start Time": "8", "End Time": "20"}, sync)
+    m = StateMachine(pots.pots, {"Start Time": "8", "End Time": "22"}, sync)
     second_thread = _thread.start_new_thread(m.run_machine, ())
     input_activity(sync, pots)
     

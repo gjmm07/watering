@@ -23,6 +23,7 @@ class MenuObject:
                 return i
     
     def hide_slaves(self, *names):
+        self.hide_none()
         mask = [x not in names for x in self.return_slaves_name()]
         hidden, non_hidden = {}, []
         for i, n_mask in enumerate(mask):
@@ -42,8 +43,14 @@ class MenuObject:
 def hide_non_executable(func):
     def wrapper(master_order):
         if (obj:=master_order[-1]).name == "MAIN MENU":
+            print(len(pots))
             if len(pots) == 0:
                 obj.hide_slaves("REMOVE POT", "RUN")
+            else:
+                obj.hide_none()
+        elif obj.name == "FIND HARDWARE":
+            if not len(pots):
+                obj.hide_slaves("FLUSH SYSTEM")
             else:
                 obj.hide_none()
         return func(master_order)
@@ -102,8 +109,6 @@ def main():
             second_thread = _thread.start_new_thread(m.run_machine, ())
             input_activity(sync, pots)
         else:
-            print(order[-1].name)
-            print(sel)
             execute[order[-1].name](sel)
         order, sel = a.send([main_menu])
 
@@ -129,8 +134,8 @@ if __name__ == "__main__":
     remove_pot = MenuObject(name="REMOVE POT", short_name="RPOT", slaves=[remove_single, remove_all])
 
     add_pot = MenuObject(name="ADD POT", short_name="APOT",
-                         slaves={key: val for key, val in enumerate(zip(["ID", "Humidity", "Pot Size", "Actuator Pin", "Sensor Pin"],
-                                                                        [Pots.iden[1], Pots.target_hum, Pots.pot_size, Pots.actuator_pin[1], Pots.sensor_pin[1]]))},
+                         slaves={key: val for key, val in enumerate(zip(["ID", "Humidity", "Frequency", "Pot Size", "Actuator Pin", "Sensor Pin"],
+                                                                        [Pots.iden[1], Pots.target_hum, Pots.frequency, Pots.pot_size, Pots.actuator_pin[1], Pots.sensor_pin[1]]))},
                          last=True)
     add_reference = MenuObject(name="ADD REFERENCE", short_name="AREF", slaves={0: ["ID", Pots.iden[1]], 1: ["Actuator Pin", Pots.actuator_pin[1]]}, last=True)
     add = MenuObject(name="ADD", short_name="ADD", slaves=[add_pot, add_reference])
