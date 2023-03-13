@@ -246,7 +246,6 @@ def write_data(func):
         print("write data")
         write_serial("write data")
         write_serial("TIME", {"day": self.cur_time["day"], "month": self.cur_time["month"], "year": self.cur_time["year"]})
-        print(self.watered_pots, self.hsensor_data)
         pot_data = [i for j in zip(self.watered_pots, [data[-1] for data in self.hsensor_data]) for i in j]
         write_serial("DATA", [self.cur_time["hour"], self.cur_time["minute"]] + self.current_weather + pot_data)
         write_serial("end")
@@ -354,10 +353,10 @@ def input_activity(sync, pots):
     utime.sleep(1)
     while True:
         read_buttons.sleep_and_wait()
-        sel = read_buttons.run_selection("show", sync.return_data, True, extra_item={"name":"Breakup", "state":False, "position":"end"}) #todo: when executing iterator isn't updated quick enough
+        sel = read_buttons.run_selection("show", func=sync.return_data, rw_control=True, extra_item={"name":"Breakup", "state":False})
         print(sel)
         if sel == "Breakup":
-            if read_buttons.run_selection2("Breakup", ["Yes", "No"]) == "Yes":
+            if read_buttons.run_selection("Breakup", ["Yes", "No"]) == "Yes":
                 sync["State Machine"] = False # kill state machine at suitable time
                 read_buttons.print_to_display("Waiting")
                 break

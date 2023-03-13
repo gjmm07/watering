@@ -62,7 +62,7 @@ def menu(master_order):
     while True:
         master = master_order[-1]
         if not master.last:
-            selection = run_selection(" ".join([x.short_name for x in master_order]), master.return_slaves_name())
+            selection = run_selection(" ".join([x.short_name for x in master_order]), iter_items=master.return_slaves_name())
             if selection == "TIMED OUT":
                 sleep_and_wait()
                 master_order = [main_menu]

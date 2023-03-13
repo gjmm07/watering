@@ -2,6 +2,7 @@ from machine import Pin, I2C
 import time, utime
 from Iterator import Iterator
 from machine_i2c_lcd import I2cLcd
+import random
 
 back_button = Pin(22, Pin.IN, Pin.PULL_UP)
 select_button = Pin(10, Pin.IN, Pin.PULL_UP)
@@ -14,48 +15,59 @@ i2c = I2C(0, sda=Pin(20), scl=Pin(21), freq=100000)
 # Initialisierung LCD über I2C
 lcd = I2cLcd(i2c, 0x27, 2, 16)
 
-def iterator(func, rw_control):
-    lst = func() + ["Breakup"]
-    print(lst)
+def iterator(iterable, rw_control, *args):
     num = 0
+    frequent_check = False
+    for arg in args:
+        if arg is not None:
+            extra_name = arg["name"]
+            if isinstance(iterable, list):
+                lst = iterable + [arg["name"]]
+            else:
+                frequent_check = True
+            rw_control = rw_control + [arg["state"]]
+        else:
+            if isinstance(iterable, list):
+                lst = iterable
+            else:
+                frequent_check = True
     while True:
-        x = yield lst[num], False
+        if frequent_check: 
+            lst = iterable() + [arg["name"]]
+        x = yield lst[num], rw_control[num]
         num += int(x)
         if num >= len(lst) or num <= -len(lst):
             num = 0
-            
 
-def run_selection(header, iter_items, rw_control=False, timeout=20, **kwargs):
+
+def run_selection(header, iter_items=None, func=None, rw_control=False, timeout=20, **kwargs):
     lcd.clear()
-    if isinstance(iter_items, list): 
-        if len(iter_items) == 0:
-            return
+    assert iter_items != func
+    if iter_items is None:
+        gen = iterator(func, [rw_control] * len(func()), kwargs.get("extra_item"))
+    elif func is None:
+        gen = iterator(iter_items, [rw_control] * len(iter_items), kwargs.get("extra_items"))
     else:
-        func = iter_items
-    if not rw_control:
-        # True = read only, False = write
-        # make all False 
-        rw_control = [False for _ in iter_items]
+        raise TypeError("Either specifiy func or iter_items")
+    
     if timeout is None:
         criteria = lambda *a: True
     else:
         criteria = lambda st, to: (time.time() - st) < to
-    gen = iterator(func, rw_control)
-    selection = next(gen)[0]
+    
+    selection, rw = next(gen)
     lcd.clear()
     lcd.putstr(header + "\n" + selection)
-    
     old_back, old_select, old_clock = 1, 1, 1
     start_time = time.time()
     update_time = start_time
-    rw = False
     while criteria(start_time, timeout):
         back, select, clock, direction = back_button.value(), select_button.value(), clock_button.value(), direction_button.value()
         if clock and not old_clock: 
             if direction:
-                selection, rw = gen.send(1)
-            else:
                 selection, rw = gen.send(-1)
+            else:
+                selection, rw = gen.send(1)
             lcd.clear()
             lcd.putstr(header + "\n" + selection)
             start_time = time.time()
@@ -66,8 +78,6 @@ def run_selection(header, iter_items, rw_control=False, timeout=20, **kwargs):
                 return selection
         else:
             if time.time() - update_time > 1:
-                # iterator.update_collection(update_iteritems(func, rw_control, kwargs["extra_item"])[0])
-                # selection, rw = iterator.current
                 selection, rw = gen.send(0)
                 lcd.clear()
                 lcd.putstr(header + "\n" + selection)
@@ -107,66 +117,6 @@ def print_to_display(text):
     lcd.putstr(text)
 
 
-def update_iteritems(func, control, kwargs):
-    iter_items = func()
-    rw_control = [control for _ in range(len(iter_items))]
-    rw_control.insert(kwargs["position"] if kwargs["position"] != "end" else len(rw_control), kwargs["state"])
-    iter_items.insert(kwargs["position"] if kwargs["position"] != "end" else len(rw_control), kwargs["name"])
-    return iter_items, rw_control
-    
-
-def run_selection2(header, iter_items, rw_control=False, timeout=20, **kwargs):
-    lcd.clear()
-    if isinstance(iter_items, list): 
-        if len(iter_items) == 0:
-            return
-    else:
-        func = iter_items
-        iter_items, rw_control = update_iteritems(func, rw_control, kwargs["extra_item"])
-    if not rw_control:
-        # True = read only, False = write
-        # make all False 
-        rw_control = [False for _ in iter_items]
-    iterator = Iterator(iter_items, rw_control)
-    assert len(iter_items) == len(rw_control)
-    if timeout is None:
-        criteria = lambda *a: True
-    else:
-        criteria = lambda st, to: (time.time() - st) < to
-    selection = iter_items[0]
-    lcd.clear()
-    lcd.putstr(header + "\n" + selection)
-    
-    old_back, old_select, old_clock = 1, 1, 1
-    start_time = time.time()
-    update_time = start_time
-    rw = rw_control[0]
-    while criteria(start_time, timeout):
-        back, select, clock, direction = back_button.value(), select_button.value(), clock_button.value(), direction_button.value()
-        if clock and not old_clock: 
-            if direction:
-                selection, rw = iterator.reversed_next()
-            else:
-                selection, rw = iterator.next_()
-            lcd.clear()
-            lcd.putstr(header + "\n" + iterator.current[0])
-            start_time = time.time()
-        if not rw:
-            if back != old_back and back:
-                return "BACK"
-            elif select != old_select and select:
-                return selection
-        else:
-            if time.time() - update_time > 1:
-                iterator.update_collection(update_iteritems(func, rw_control, kwargs["extra_item"])[0])
-                selection, rw = iterator.current
-                lcd.clear()
-                lcd.putstr(header + "\n" + selection)
-                update_time = time.time()
-        old_back, old_select, old_clock = back, select, clock
-    return "TIMED OUT"
-
-
 def read_select():
     while True:
         if not select_button.value():
@@ -188,10 +138,12 @@ def sleep_and_wait():
     lcd.backlight_on()
         
 
+def func():
+    return [str(random.random()) for _ in range(5)]
 
 if __name__ == "__main__":
     # read_select()
-    print(run_selection("abcd", ["A", "B", "C", "D"]))
+    print(run_selection("show", func=func, rw_control=True, extra_item={"name":"Breakup", "state":False}))
 
 
 
