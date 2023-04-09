@@ -144,7 +144,6 @@ def func():
 if __name__ == "__main__":
     # read_select()
     print(run_selection("show", func=func, rw_control=True, extra_item={"name":"Breakup", "state":False}))
-    print("123")
 
 
 
