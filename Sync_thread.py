@@ -56,3 +56,4 @@ if __name__ == "__main__":
     flag.add_flag("Flag 1")
     flag.add_flag("Flag 2")
     flag["all"] = True
+    print("hello")
