@@ -4,6 +4,7 @@ import utime
 import time, _thread
 import Sync_thread
 
+
 class MenuObject:
     def __init__(self, name, slaves, short_name, last=False):
         self.name = name
@@ -57,7 +58,7 @@ def hide_non_executable(func):
     return wrapper
 
 
-@hide_non_executable
+# @hide_non_executable
 def menu(master_order):
     while True:
         master = master_order[-1]
