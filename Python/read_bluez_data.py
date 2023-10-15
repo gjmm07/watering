@@ -107,5 +107,5 @@ class DataCollector:
 
 
 if __name__ == "__main__":
-    # DataCollector("/dev/rfcomm0").read_type()
+    DataCollector("/dev/rfcomm0").read_type()
     print(read_weather_forcast())
