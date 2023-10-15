@@ -9,11 +9,13 @@
 import random
 import time
 from datetime import datetime
+from datetime import timedelta
 import serial
 import warnings
 from collections import deque
 import threading
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 from matplotlib.animation import FuncAnimation
 
 LEN = 100
@@ -91,7 +93,7 @@ class DummySerialReader:
         self.keys = []
 
     def main(self):
-        self.queues = [deque() for _ in range(PLOTS)]
+        self.queues = [deque(maxlen=LEN) for _ in range(PLOTS)]
         self.keys = ["a" for _ in self.queues]
         self.initialized_event.set()
         while True:
@@ -111,16 +113,18 @@ class Plotter:
             time.sleep(0.5)
         fig, axs = plt.subplots(len(sp.keys))
         for ax in axs:
-            ax.set_xlim((0, LEN))
+            # ax.set_xlim((0, LEN))
             ax.set_ylim(-1, 1)
             self.lines.append(*ax.plot([], []))
-        ani = FuncAnimation(fig, self.animate, fargs=(sp, ), interval=25)
+            ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S"))
+            ax.set_xlim((datetime.now() - timedelta(minutes=5)), datetime.now() + timedelta(minutes=5))
+        ani = FuncAnimation(fig, self.animate, fargs=(sp, ), interval=1000)
         plt.show()
 
     def animate(self, _, sp: SerialPlotter):
         for line, que in zip(self.lines, sp.queues):
-            print(sp.timestamps)
-            line.set_data(range(len(sp.timestamps)), list(que))
+            print(len(sp.timestamps) == len(que))
+            line.set_data(sp.timestamps, list(que))
         return self.lines
 
 
