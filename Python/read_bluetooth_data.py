@@ -60,7 +60,6 @@ class SerialPlotter:
                 n_data = float(n_data[:-len(n_data.lstrip("0123456789."))])
             queue.append(n_data)
         self.timestamps.append(datetime.now())
-        print(data)
 
     def read_water(self, *data):
         if not self.initialized:
@@ -178,7 +177,7 @@ class Plotter:
 if __name__ == "__main__":
     init_event = threading.Event()
     # init_event.set()
-    splot = DummySerialReader(init_event)
+    splot = SerialPlotter(init_event)
     t1 = threading.Thread(target=splot.main, daemon=True)
     t1.start()
     p = Plotter()
