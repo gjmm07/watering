@@ -154,7 +154,7 @@ class Plotter:
             if "pot" in key.lower():
                 ax2 = ax.twinx()
                 ax2.set_ylim(0, 2)
-                self.water_lines.append(*ax2.plot([], [], "bo", color="orange"))
+                self.water_lines.append(*ax2.plot([], [], "o", color="orange"))
                 self.ax2.append(ax2)
             ax.set_ylim(-1, 1)
             self.lines[i] = ax.plot([], [], label=key)[0]
@@ -182,7 +182,7 @@ class Plotter:
 if __name__ == "__main__":
     init_event = threading.Event()
     # init_event.set()
-    splot = SerialPlotter(init_event)
+    splot = DummySerialReader(init_event)
     t1 = threading.Thread(target=splot.main, daemon=True)
     t1.start()
     p = Plotter()
