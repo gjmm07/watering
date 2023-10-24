@@ -182,7 +182,7 @@ class Plotter:
 if __name__ == "__main__":
     init_event = threading.Event()
     # init_event.set()
-    splot = DummySerialReader(init_event)
+    splot = SerialPlotter(init_event)
     t1 = threading.Thread(target=splot.main, daemon=True)
     t1.start()
     p = Plotter()
