@@ -18,6 +18,7 @@ import threading
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.animation import FuncAnimation
+import aiofiles
 
 LEN = 1_000_000
 
@@ -45,9 +46,10 @@ class SerialPlotter:
         self.initialized = True
         self.initialized_event.set()
 
-    def read_data(self, file, *data):
+    def read_data(self, data_queue: asyncio.Queue, *data):
         if not self.initialized:
             return
+        data_queue.put_nowait(data)
         for queue, n_data in zip(self.queues, data):
             try:
                 n_data = float(n_data)
@@ -55,44 +57,57 @@ class SerialPlotter:
                 n_data = float(n_data[:-len(n_data.lstrip("0123456789."))])
             queue.append(n_data)
         self.timestamps.append(datetime.now())
-        file.write(", ".join([str(d) for d in data]))
 
-    def read_water(self, file, *data):
+    def read_water(self, water_queue: asyncio.Queue, *data):
         if not self.initialized:
             return
+        water_queue.put_nowait(data)
         self.water_queues[self.pot_indices.index(data[0])].append((datetime.now(), data[1]))
-        file.write(", ".join([str(d) for d in data]))
 
-    def main(self):
+    async def read_raw(self, water_queue, data_queue):
         with (self.ser as ser):
             ser.isOpen()
-            current_time = datetime.now().timetuple()
             while True:
-                day = current_time[2]
-                data_filename, water_filename = [name + "{year}_{month}_{day}.txt".format(
-                    year=current_time[0],
-                    month=current_time[1],
-                    day=current_time[2]) for name in ("data", "water")]
+                raw_data = ser.readline().decode().strip()
+                if raw_data == "":
+                    warnings.warn("Disconnected?")
+                    continue
+                if raw_data[0] != "(":
+                    continue
+                raw_data = eval(raw_data)
+                match raw_data[0]:
+                    case "init":
+                        self.read_init(*raw_data[1:])
+                    case "data":
+                        self.read_data(data_queue, *raw_data[1:])
+                    case "water":
+                        self.read_water(water_queue, *raw_data[1:])
+                await asyncio.sleep(0)
 
-                with open(data_filename, "w") as data_file, open(water_filename, "w") as water_file:
-                    while True:
-                        raw_data = ser.readline().decode().strip()
-                        if raw_data == "":
-                            warnings.warn("Disconnected?")
-                            continue
-                        if raw_data[0] != "(":
-                            continue
-                        raw_data = eval(raw_data)
-                        match raw_data[0]:
-                            case "init":
-                                self.read_init(*raw_data[1:])
-                            case "data":
-                                self.read_data(data_file, *raw_data[1:])
-                            case "water":
-                                self.read_water(water_file, *raw_data[1:])
-                        current_time = datetime.now().timetuple()
-                        if current_time[2] != day:
-                            break
+    async def write_water_events(self, water_queue: asyncio.Queue):
+        while True:
+            async with aiofiles.open("abc.txt", "a+") as file:
+                await file.write(", ".join([str(d) for d in await water_queue.get()]) + "\n")
+
+    async def write_data_events(self, data_queue: asyncio.Queue):
+        while True:
+            async with aiofiles.open("abc.txt", "a+") as file:
+                await file.write(", ".join([str(d) for d in await data_queue.get()]) + "\n")
+
+    def main(self):
+        water_queue = asyncio.Queue()
+        data_queue = asyncio.Queue()
+        loop = asyncio.new_event_loop()
+        tasks = [loop.create_task(self.read_raw(water_queue, data_queue)),
+                 loop.create_task(self.write_water_events(water_queue)),
+                 loop.create_task(self.write_data_events(data_queue))]
+        try:
+            loop.run_forever()
+        except Exception as e:
+            print(e)
+            for task in tasks:
+                if not task.done() or task.cancelled():
+                    loop.run_until_complete(task)
 
 
 class DummySerialReader:
@@ -160,7 +175,7 @@ class Plotter:
             self.lines[i] = ax.plot([], [], label=key)[0]
             ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S"))
             ax.legend(loc="upper right")
-        ani = FuncAnimation(fig, self.animate, fargs=(sp, ), interval=1000, cache_frame_data=False)
+        ani = FuncAnimation(fig, self.animate, fargs=(sp,), interval=1000, cache_frame_data=False)
         plt.show()
 
     def animate(self, _, sp: SerialPlotter):
@@ -187,4 +202,3 @@ if __name__ == "__main__":
     t1.start()
     p = Plotter()
     p.draw_plot(splot, init_event)
-
