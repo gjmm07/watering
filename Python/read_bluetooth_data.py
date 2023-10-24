@@ -191,13 +191,11 @@ class Plotter:
                 if not len(sp.timestamps) < 2:
                     ax.set_xlim(sp.timestamps[0], sp.timestamps[-1])
                     data = list(que)
-                    print(len(sp.timestamps) == len(data))
                     line.set_data(sp.timestamps, data)
                     ax.set_ylim(min(data) - 0.1 * max(data), max(data) + 0.1 * max(data))
             for line, que in zip(self.water_lines, sp.water_queues):
                 try:
                     dates, amount = zip(*que)
-                    print(len(dates) == len(amount))
                     line.set_data(dates, amount)
                 except ValueError:
                     pass
@@ -208,7 +206,7 @@ if __name__ == "__main__":
     init_event = threading.Event()
     r_lock = threading.Lock()
     # init_event.set()
-    splot = DummySerialReader(init_event, r_lock)
+    splot = SerialPlotter(init_event, r_lock)
     t1 = threading.Thread(target=splot.main, daemon=True)
     t1.start()
     p = Plotter()
