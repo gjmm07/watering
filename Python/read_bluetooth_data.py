@@ -104,8 +104,8 @@ class DummySerialReader:
     async def read_data(self, stop_event: asyncio.Event):
         self.initialized_event.set()
         while not stop_event.is_set():
-            for que in self.queues:
-                que.append(random.random())
+            for i, que in enumerate(self.queues):
+                que.append(random.random() * (i + 1))
             self.timestamps.append(datetime.now())
             await asyncio.sleep(0.5)
 
@@ -136,15 +136,16 @@ class Plotter:
         self.water_lines = list()
         self.axs = np.ndarray
         self.ax2 = list()
+        self.new_order = list()
 
     def draw_plot(self, sp: SerialPlotter or DummySerialReader, initialized_event: threading.Event):
         while not initialized_event.is_set():
             time.sleep(0.5)
         fig, self.axs = plt.subplots(len(sp.keys), sharex=True)
         plt.xticks(rotation=90)
-        new_order = sorted(range(len(sp.keys)), key=lambda k: sp.keys[k])
+        self.new_order = sorted(range(len(sp.keys)), key=lambda k: sp.keys[k])
         self.lines = [[] for _ in sp.keys]
-        for i, ax in zip(new_order, self.axs):
+        for i, ax in zip(self.new_order, self.axs):
             key = sp.keys[i]
             if "pot" in key.lower():
                 ax2 = ax.twinx()
@@ -159,12 +160,12 @@ class Plotter:
         plt.show()
 
     def animate(self, _, sp: SerialPlotter):
-        for line, que, ax in zip(self.lines, sp.queues, self.axs):
+        for line, que, ax in zip(self.lines, sp.queues, [self.axs[i] for i in self.new_order]):
             if not len(sp.timestamps) < 2:
                 ax.set_xlim(sp.timestamps[0], sp.timestamps[-1])
                 data = list(que)
                 line.set_data(sp.timestamps, data)
-                ax.set_ylim(min(data) - 0.4 * max(data), max(data) + 0.4 * max(data))
+                ax.set_ylim(min(data) - 0.5 * max(data), max(data) + 0.5 * max(data))
         for line, que in zip(self.water_lines, sp.water_queues):
             try:
                 dates, amount = zip(*que)
@@ -177,7 +178,7 @@ class Plotter:
 if __name__ == "__main__":
     init_event = threading.Event()
     # init_event.set()
-    splot = SerialPlotter(init_event)
+    splot = DummySerialReader(init_event)
     t1 = threading.Thread(target=splot.main, daemon=True)
     t1.start()
     p = Plotter()
