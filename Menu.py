@@ -4,16 +4,15 @@ import utime
 from Hardware import LCDDisplay
 
 
-# Initialisierung I2C
-i2c = I2C(0, sda=Pin(20), scl=Pin(21), freq=100000)
-
-# Initialisierung LCD über I2C
-lcd = I2cLcd(i2c, 0x27, 2, 16)
-
-
 class Menu:
     
-    def __init__(self, name: str, short_name: str, slaves: list, *func_args, key: str = None):
+    def __init__(self,
+                 name: str,
+                 short_name: str,
+                 slaves: list,
+                 *func_args,
+                 key: str = None):
+        
         self.name = name
         self.short_name = short_name
         self.slaves = slaves
@@ -62,12 +61,12 @@ class CollectorMenu(Menu):
                  name: str,
                  short_name: str,
                  slaves: list,
-                 function,
+                 function, 
                  *func_args,
+                 bsteps_on_done: int = None,
                  key: str = None):
         
         super().__init__(name, short_name, slaves, *func_args, key=key)
-        
         
         self.kwargs = [key] if key is not None else []
         if slaves is not None:
@@ -76,12 +75,11 @@ class CollectorMenu(Menu):
                     self.kwargs.append(slave.key)
                 except AttributeError:
                     pass
-        # self.func_args = func_args
         self.kwargs = dict.fromkeys(self.kwargs)
         
         self.ready_to_exe = False
         self.function = function
-        self.handler = None
+        self.bsteps_on_done = bsteps_on_done
         
     def collect_data(self, key, value):
         self.kwargs[key] = value
@@ -102,9 +100,6 @@ class CollectorMenu(Menu):
     def reset(self):
         self.kwargs = {slave.key: None for slave in self.slaves}
         self.suffix = ["" for _ in self.slaves]
-        
-    def add_handler(self, handler):
-        self.handler = handler
         
     def show_short(self, value, time):
         LCDDisplay().clear()

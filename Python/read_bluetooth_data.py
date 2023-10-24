@@ -6,10 +6,11 @@
 # sudo killall rfcomm
 # sudo rfcomm connect /dev/rfcomm0 {device address} 1 &
 # screen /dev/rfcomm0 9600 (for printing into screen - Ctrl-A, k, y to kill - but screen occupied
+import asyncio
 import random
 import time
 from datetime import datetime
-from datetime import timedelta
+import numpy as np
 import serial
 import warnings
 from collections import deque
@@ -29,6 +30,9 @@ class SerialPlotter:
         self.queues = list[deque]
         self.timestamps = deque(maxlen=LEN)
         self.initialized_event = initialized_event
+        self.water_queues = list[deque]
+        self.pot_indices = list()
+        self.initialized = False
 
     def read_time(self, *data):
         print("time", end=": ")
@@ -38,12 +42,16 @@ class SerialPlotter:
         print("initialized")
         if self.keys != data and self.keys:
             warnings.warn("New keys. Need to reinit everything?")
+
+        self.pot_indices = [x.split()[1] for x in sorted([item for item in data if "pot" in item.lower()])]
+        self.water_queues = [deque(maxlen=1000) for _ in self.pot_indices]
         self.initialized_event.set()
         self.keys = data
         self.queues = [deque(maxlen=LEN) for _ in self.keys]
+        self.initialized = True
 
     def read_data(self, *data):
-        if not self.keys:
+        if not self.initialized:
             return
         for queue, n_data in zip(self.queues, data):
             try:
@@ -55,8 +63,10 @@ class SerialPlotter:
         print(data)
 
     def read_water(self, *data):
-        print("read water", end="")
-        print(data)
+        if not self.initialized:
+            return
+        # ('water', '2', 1.08)
+        self.water_queues[self.pot_indices.index(data[0])].append((datetime.now(), data[1]))
 
     def main(self):
         with self.ser as ser:
@@ -81,57 +91,93 @@ class SerialPlotter:
                         self.read_water(*raw_data[1:])
 
 
-PLOTS = 5
-
-
 class DummySerialReader:
 
     def __init__(self, initialized_event):
         self.timestamps = deque(maxlen=LEN)
         self.queues = list[deque]
         self.initialized_event = initialized_event
-        self.keys = []
+        self.keys = ('Pot 2 hum', 'Pot 1 hum', 'rel hum', 'Temp', 'Pressure', 'Pot 3 hum')
+        self.queues = [deque(maxlen=LEN) for _ in self.keys]
+        self.water_queues = [deque(maxlen=1000) for _ in range(3)]
 
-    def main(self):
-        self.queues = [deque(maxlen=LEN) for _ in range(PLOTS)]
-        self.keys = ["a" for _ in self.queues]
+    async def read_data(self, stop_event: asyncio.Event):
         self.initialized_event.set()
-        while True:
+        while not stop_event.is_set():
             for que in self.queues:
                 que.append(random.random())
             self.timestamps.append(datetime.now())
-            time.sleep(0.5)
+            await asyncio.sleep(0.5)
+
+    async def read_water_events(self, stop_event: asyncio.Event, index):
+        while not stop_event.is_set():
+            await asyncio.sleep(random.random() * 10)
+            self.water_queues[index].append((datetime.now(), 0.5))
+
+    def main(self):
+        loop = asyncio.new_event_loop()
+        stop_event = asyncio.Event()
+        tasks = [loop.create_task(self.read_data(stop_event))]
+        for i in range(3):
+            tasks.append(loop.create_task(self.read_water_events(stop_event, i)))
+        try:
+            loop.run_forever()
+        except KeyboardInterrupt:
+            stop_event.set()
+            for task in tasks:
+                if not task.done() or task.cancelled():
+                    loop.run_until_complete(task)
 
 
 class Plotter:
 
     def __init__(self):
         self.lines = list()
+        self.water_lines = list()
+        self.axs = np.ndarray
+        self.ax2 = list()
 
     def draw_plot(self, sp: SerialPlotter or DummySerialReader, initialized_event: threading.Event):
         while not initialized_event.is_set():
             time.sleep(0.5)
-        fig, axs = plt.subplots(len(sp.keys))
-        for ax in axs:
-            # ax.set_xlim((0, LEN))
+        fig, self.axs = plt.subplots(len(sp.keys), sharex=True)
+        plt.xticks(rotation=90)
+        new_order = sorted(range(len(sp.keys)), key=lambda k: sp.keys[k])
+        self.lines = [[] for _ in sp.keys]
+        for i, ax in zip(new_order, self.axs):
+            key = sp.keys[i]
+            if "pot" in key.lower():
+                ax2 = ax.twinx()
+                ax2.set_ylim(0, 2)
+                self.water_lines.append(*ax2.plot([], [], "bo", c="orange"))
+                self.ax2.append(ax2)
             ax.set_ylim(-1, 1)
-            self.lines.append(*ax.plot([], []))
+            self.lines[i] = ax.plot([], [], label=key)[0]
             ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S"))
-            ax.set_xlim((datetime.now() - timedelta(minutes=5)), datetime.now() + timedelta(minutes=5))
-        ani = FuncAnimation(fig, self.animate, fargs=(sp, ), interval=1000)
+            ax.legend(loc="upper right")
+        ani = FuncAnimation(fig, self.animate, fargs=(sp, ), interval=1000, cache_frame_data=False)
         plt.show()
 
     def animate(self, _, sp: SerialPlotter):
-        for line, que in zip(self.lines, sp.queues):
-            print(len(sp.timestamps) == len(que))
-            line.set_data(sp.timestamps, list(que))
+        for line, que, ax in zip(self.lines, sp.queues, self.axs):
+            if not len(sp.timestamps) < 2:
+                ax.set_xlim(sp.timestamps[0], sp.timestamps[-1])
+                data = list(que)
+                line.set_data(sp.timestamps, data)
+                ax.set_ylim(min(data) - 0.4 * max(data), max(data) + 0.4 * max(data))
+        for line, que in zip(self.water_lines, sp.water_queues):
+            try:
+                dates, amount = zip(*que)
+                line.set_data(dates, amount)
+            except ValueError:
+                pass
         return self.lines
 
 
 if __name__ == "__main__":
     init_event = threading.Event()
     # init_event.set()
-    splot = DummySerialReader(init_event)
+    splot = SerialPlotter(init_event)
     t1 = threading.Thread(target=splot.main, daemon=True)
     t1.start()
     p = Plotter()

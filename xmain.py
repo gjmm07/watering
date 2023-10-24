@@ -36,15 +36,23 @@ def process_select(history, menu, collector):
     else: # handle cases where selection isn't another menu
         selection = menu
         collector.collect_data(key, selection)
-        print(key, selection)
-        print(collector.ready_to_exe)
         if collector.ready_to_exe:
             res = collector.function(*collector.func_args, **collector.kwargs)
             if res is not None:
                 collector.show_short(res, 1)
-            history, menu = [history[0]], history[0]
+#             if collector.bsteps_on_done is None:
+#                 
+#                 collector = None
+#             else:
+            print(history)
+            print(menu)
+            if collector.bsteps_on_done is None or abs(collector.bsteps_on_done) > len(history):
+                history, menu = [history[0]], history[0]
+            else:
+                history = history[:(collector.bsteps_on_done + 1) if collector.bsteps_on_done != -1 else None]
+                menu = history[-1]
+                
             menu.initialize()
-            collector = None
         else:
             history, menu = process_backwards(history, menu)
     return history, menu, collector
@@ -134,6 +142,7 @@ if __name__ == "__main__":
                                     SpecialFuncs.find_valve,
                                     pot_actp,
                                     pots,
+                                    bsteps_on_done = -1,
                                     key="act_pin")
     
     find_sensor = Menu.CollectorMenu("Find Sensor",
@@ -142,6 +151,7 @@ if __name__ == "__main__":
                                      SpecialFuncs.find_sensor,
                                      pot_senp,
                                      pots,
+                                     bsteps_on_done = -1, 
                                      key="sen_pin")
     
     flush_system = Menu.CollectorMenu("Flush System",

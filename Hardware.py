@@ -42,10 +42,10 @@ class BluetoothWriter:
     UART = UART(1, baudrate=9600, tx=Pin(8), rx=Pin(9))
     
     def write(self, *data):
-        # print(data)
-        pass
-#         for d in data:
-#             self.UART.write(d)
+        print(data)
+        for d in str(data):
+            self.UART.write(d)
+        self.UART.write("\r\n")
         
 
 class ConditionSensor:
@@ -103,7 +103,11 @@ class HumSensor:
     def read(self, pin: str):
         for s in self.MP_LOOKUP[pin]:
             s()
-        return self.SENSOR.read_u16() / 65535
+        if pin == "E":
+            # currently another sensor type is connected at Sensor E
+            return 1 - self.SENSOR.read_u16() / 65535
+        else:
+            return self.SENSOR.read_u16() / 65535
     
 
     
@@ -124,6 +128,9 @@ class Pump:
 if __name__ == "__main__":
     LCDDisplay().backlight_off()
     Pump().off()
+    for let in "ABCDEFGH":
+        print(HumSensor().read(let))
+    print(ConditionSensor().read())
         
         
         
