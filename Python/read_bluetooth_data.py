@@ -37,9 +37,10 @@ class SerialPlotter:
         self.read_lock = read_lock
 
     def read_init(self, *data):
-        print("initialized")
         if self.keys != data and self.keys:
             warnings.warn("New keys. Need to reinit everything?")
+        if self.initialized:
+            return
         self.pot_indices = [x.split()[1] for x in sorted([item for item in data if "pot" in item.lower()])]
         self.water_queues = [deque(maxlen=1000) for _ in self.pot_indices]
         self.keys = data
@@ -190,11 +191,13 @@ class Plotter:
                 if not len(sp.timestamps) < 2:
                     ax.set_xlim(sp.timestamps[0], sp.timestamps[-1])
                     data = list(que)
+                    print(len(sp.timestamps) == len(data))
                     line.set_data(sp.timestamps, data)
                     ax.set_ylim(min(data) - 0.1 * max(data), max(data) + 0.1 * max(data))
             for line, que in zip(self.water_lines, sp.water_queues):
                 try:
                     dates, amount = zip(*que)
+                    print(len(dates) == len(amount))
                     line.set_data(dates, amount)
                 except ValueError:
                     pass
