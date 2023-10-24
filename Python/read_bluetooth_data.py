@@ -55,13 +55,13 @@ class SerialPlotter:
                 n_data = float(n_data[:-len(n_data.lstrip("0123456789."))])
             queue.append(n_data)
         self.timestamps.append(datetime.now())
-        file.write(data)
+        file.write(", ".join([str(d) for d in data]))
 
     def read_water(self, file, *data):
         if not self.initialized:
             return
         self.water_queues[self.pot_indices.index(data[0])].append((datetime.now(), data[1]))
-        file.write(data)
+        file.write(", ".join([str(d) for d in data]))
 
     def main(self):
         with (self.ser as ser):
