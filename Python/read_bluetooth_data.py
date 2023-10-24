@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.animation import FuncAnimation
 
-LEN = 100
+LEN = 1_000_000
 
 
 class SerialPlotter:
@@ -34,23 +34,18 @@ class SerialPlotter:
         self.pot_indices = list()
         self.initialized = False
 
-    def read_time(self, *data):
-        print("time", end=": ")
-        print(data)
-
     def read_init(self, *data):
         print("initialized")
         if self.keys != data and self.keys:
             warnings.warn("New keys. Need to reinit everything?")
-
         self.pot_indices = [x.split()[1] for x in sorted([item for item in data if "pot" in item.lower()])]
         self.water_queues = [deque(maxlen=1000) for _ in self.pot_indices]
-        self.initialized_event.set()
         self.keys = data
         self.queues = [deque(maxlen=LEN) for _ in self.keys]
         self.initialized = True
+        self.initialized_event.set()
 
-    def read_data(self, *data):
+    def read_data(self, file, *data):
         if not self.initialized:
             return
         for queue, n_data in zip(self.queues, data):
@@ -60,34 +55,44 @@ class SerialPlotter:
                 n_data = float(n_data[:-len(n_data.lstrip("0123456789."))])
             queue.append(n_data)
         self.timestamps.append(datetime.now())
+        file.write(data)
 
-    def read_water(self, *data):
+    def read_water(self, file, *data):
         if not self.initialized:
             return
-        # ('water', '2', 1.08)
         self.water_queues[self.pot_indices.index(data[0])].append((datetime.now(), data[1]))
+        file.write(data)
 
     def main(self):
-        with self.ser as ser:
+        with (self.ser as ser):
             ser.isOpen()
+            current_time = datetime.now().timetuple()
             while True:
-                raw_data = ser.readline().decode().strip()
-                if raw_data == "":
-                    warnings.warn("Disconnected?")
-                    continue
-                if raw_data[0] != "(":
-                    continue
-                raw_data = eval(raw_data)
-                match raw_data[0]:
-                    case "time":
-                        self.read_time(*raw_data[1:])
-                    case "init":
-                        self.read_init(*raw_data[1:])
-                    case "data":
-                        # what's with time raw_data[1]?
-                        self.read_data(*raw_data[2:])
-                    case "water":
-                        self.read_water(*raw_data[1:])
+                day = current_time[2]
+                data_filename, water_filename = [name + "{year}_{month}_{day}.txt".format(
+                    year=current_time[0],
+                    month=current_time[1],
+                    day=current_time[2]) for name in ("data", "water")]
+
+                with open(data_filename, "w") as data_file, open(water_filename, "w") as water_file:
+                    while True:
+                        raw_data = ser.readline().decode().strip()
+                        if raw_data == "":
+                            warnings.warn("Disconnected?")
+                            continue
+                        if raw_data[0] != "(":
+                            continue
+                        raw_data = eval(raw_data)
+                        match raw_data[0]:
+                            case "init":
+                                self.read_init(*raw_data[1:])
+                            case "data":
+                                self.read_data(data_file, *raw_data[1:])
+                            case "water":
+                                self.read_water(water_file, *raw_data[1:])
+                        current_time = datetime.now().timetuple()
+                        if current_time[2] != day:
+                            break
 
 
 class DummySerialReader:
@@ -149,7 +154,7 @@ class Plotter:
             if "pot" in key.lower():
                 ax2 = ax.twinx()
                 ax2.set_ylim(0, 2)
-                self.water_lines.append(*ax2.plot([], [], "bo", c="orange"))
+                self.water_lines.append(*ax2.plot([], [], "bo", color="orange"))
                 self.ax2.append(ax2)
             ax.set_ylim(-1, 1)
             self.lines[i] = ax.plot([], [], label=key)[0]
@@ -164,7 +169,7 @@ class Plotter:
                 ax.set_xlim(sp.timestamps[0], sp.timestamps[-1])
                 data = list(que)
                 line.set_data(sp.timestamps, data)
-                ax.set_ylim(min(data) - 0.5 * max(data), max(data) + 0.5 * max(data))
+                ax.set_ylim(min(data) - 0.1 * max(data), max(data) + 0.1 * max(data))
         for line, que in zip(self.water_lines, sp.water_queues):
             try:
                 dates, amount = zip(*que)
