@@ -48,9 +48,10 @@ class SerialPlotter:
         self.initialized = True
         self.initialized_event.set()
 
-    def read_data(self, *data):
+    def read_data(self, data_queue: asyncio.Queue, *data):
         if not self.initialized:
             return
+        data_queue.put_nowait(data)
         self.read_lock.acquire()
         for queue, n_data in zip(self.queues, data):
             try:
@@ -61,12 +62,13 @@ class SerialPlotter:
         self.timestamps.append(datetime.now())
         self.read_lock.release()
 
-    def read_water(self, *data):
+    def read_water(self, water_queue: asyncio.Queue, *data):
         if not self.initialized:
             return
+        water_queue.put_nowait(data)
         self.water_queues[self.pot_indices.index(data[0])].append((datetime.now(), data[1]))
 
-    def main(self):
+    async def read_raw(self, water_queue: asyncio.Queue, data_queue: asyncio.Queue):
         with (self.ser as ser):
             ser.isOpen()
             while True:
@@ -81,21 +83,22 @@ class SerialPlotter:
                     case "init":
                         self.read_init(*raw_data[1:])
                     case "data":
-                        self.read_data(*raw_data[1:])
+                        self.read_data(data_queue, *raw_data[1:])
                     case "water":
-                        self.read_water(*raw_data[1:])
+                        self.read_water(water_queue, *raw_data[1:])
+                await asyncio.sleep(0)
 
     async def write_water_events(self, water_queue: asyncio.Queue):
         while True:
-            async with aiofiles.open("abc.txt", "a+") as file:
+            async with aiofiles.open("water.txt", "a+") as file:
                 await file.write(", ".join([str(d) for d in await water_queue.get()]) + "\n")
 
     async def write_data_events(self, data_queue: asyncio.Queue):
         while True:
-            async with aiofiles.open("abc.txt", "a+") as file:
+            async with aiofiles.open("data.txt", "a+") as file:
                 await file.write(", ".join([str(d) for d in await data_queue.get()]) + "\n")
 
-    def main2(self):
+    def main(self):
         water_queue = asyncio.Queue()
         data_queue = asyncio.Queue()
         loop = asyncio.new_event_loop()
@@ -168,7 +171,7 @@ class Plotter:
         while not initialized_event.is_set():
             time.sleep(0.5)
         fig, self.axs = plt.subplots(len(sp.keys), sharex=True)
-        plt.xticks(rotation=90)
+        plt.xticks(rotation=60)
         self.new_order = sorted(range(len(sp.keys)), key=lambda k: sp.keys[k])
         self.lines = [[] for _ in sp.keys]
         for i, ax in zip(self.new_order, self.axs):
